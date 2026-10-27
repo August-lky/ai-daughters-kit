@@ -246,7 +246,9 @@
       "maxLength": 500,
       "notifyOwnerOnError": false
     },
-    "ownerAutoMove": {},
+    "ownerAutoMove": {
+      "ctxTokens": 400000
+    },
     "context": {
       "recentLimit": 200,
       "unreadLimit": 30,
@@ -276,6 +278,7 @@
     "baseURL": "",
     "model": "deepseek-v4-flash",
     "maxUses": 5,
+    "maxTokens": 4096,
     "maxResults": 8,
     "timeoutMs": 35000
   },
