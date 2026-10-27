@@ -1,0 +1,57 @@
+{
+  "enabled": true,
+  "selfQQ": 10069,
+  "fishQQ": 10068,
+  "ownerQQ": 10050,
+  "snowlumaConfigDir": "E:/SnowLuma/config",
+  "claudeExe": "auto",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "limits": {
+    "convosPerDay": 0,
+    "roundsPerConvo": 0,
+    "ownerRepliesPerDay": 0,
+    "convoGapMin": 30,
+    "debounceSec": 6,
+    "maxWaitSec": 12,
+    "ownerProactivePerDay": 0
+  },
+  "proxy": "http://127.0.0.1:7897",
+  "weeklyStopAt": 1.01,
+  "shareWatching": true,
+  "groups": [
+    10008,
+    10020,
+    10019
+  ],
+  "groupDebounceSec": 2,
+  "debounceSecBy": {
+    "owner": 2.5,
+    "fish": 3.5
+  },
+  "replyEffort": "low",
+  "groupAliases": {
+    "10019": "小房子"
+  },
+  "houseGroups": [
+    10019
+  ],
+  "slowGroups": {
+    "10020": {
+      "minWakeGapSec": 120,
+      "maxLines": 2,
+      "debounceSec": 15,
+      "lurkGapMin": 60
+    }
+  },
+  "houseTiming": {
+    "fishBatchSec": 10,
+    "fishOwnerBatchSec": 4,
+    "fishQuietSec": 12,
+    "sisterDebounceSec": 5,
+    "sisterMaxWaitSec": 30,
+    "sisterMinGapSec": 12,
+    "sisterOwnerYieldSec": 15,
+    "sisterAfterFishSec": 4
+  }
+}

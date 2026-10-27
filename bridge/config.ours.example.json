@@ -1,0 +1,313 @@
+{
+  "dsh": {
+    "baseUrl": "http://127.0.0.1:3080",
+    "provider": "deepseek-official",
+    "model": "deepseek-flash",
+    "reasoningEffort": "high",
+    "authHeader": "authorization",
+    "authPrefix": "Bearer",
+    "allowRemote": false
+  },
+  "role": {
+    "maxInjectChars": 20000
+  },
+  "snowluma": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "httpUrl": "http://127.0.0.1:3000",
+    "followDiscoveredEndpoint": true,
+    "silenceWarnMs": 600000,
+    "launcherPath": "E:/SnowLuma/launcher.bat",
+    "homeDir": "E:/SnowLuma",
+    "selfUin": "10068"
+  },
+  "ownerQQ": 10050,
+  "sessionCwd": "",
+  "agentPreset": "qq-chat",
+  "workspaceTitle": "QQ 聊天",
+  "allow": {
+    "private": [
+      10050,
+      10068,
+      10112,
+      10099,
+      10086,
+      10069
+    ],
+    "groups": [
+      10008,
+      10020,
+      10019
+    ]
+  },
+  "deny": {
+    "private": [],
+    "groups": []
+  },
+  "allowAllWhenEmpty": false,
+  "ackMessage": "",
+  "sendDelayMs": 300,
+  "questionTimeoutMs": 300000,
+  "consolePort": 3100,
+  "pricing": {
+    "models": {
+      "my-relay-model": {
+        "label": "我的中转模型",
+        "off": {
+          "cacheHit": 0.5,
+          "cacheMiss": 3,
+          "output": 9
+        }
+      }
+    }
+  },
+  "security": {
+    "interceptNotify": false
+  },
+  "slang": {
+    "enabled": true,
+    "extractMinMessages": 80,
+    "extractCooldownMs": 7200000,
+    "inferenceThresholds": [
+      3,
+      8
+    ],
+    "injectMax": 8,
+    "learnerPreset": "qq-chat",
+    "workspaceTitle": "QQ 黑话学习",
+    "autoResearch": true
+  },
+  "social": {
+    "enabled": true,
+    "maxReplyChars": 500,
+    "mustReplyKeywords": [
+      "deepseek",
+      "小鲸鱼",
+      "大肥鱼",
+      "鲸鱼",
+      "d指导",
+      "在吗"
+    ],
+    "contextWindow": 20,
+    "triggerProbability": 0.1,
+    "activeCheckMinMs": 8000,
+    "activeCheckMaxMs": 30000,
+    "idleWindowMs": 360000,
+    "idleRetryProbability": 0.4,
+    "proactiveEnabled": true,
+    "proactiveIdleThresholdMs": 1800000,
+    "proactiveCheckMinMs": 2700000,
+    "proactiveCheckMaxMs": 5400000,
+    "proactiveProbability": 0.2,
+    "activeReplyDelayMinMs": 1000,
+    "activeReplyDelayMaxMs": 5000,
+    "activeDurationEnabled": true,
+    "activeDurationMinMs": 1200000,
+    "activeDurationMaxMs": 3000000,
+    "skipProbability": 0.05,
+    "surrenderProbability": 0,
+    "idleRetryWaitMs": 120000,
+    "burstEnabled": true,
+    "burstIntervalMinMs": 1000,
+    "burstIntervalMaxMs": 3000,
+    "longGapProbability": 0.2,
+    "longGapMinMs": 5000,
+    "longGapMaxMs": 10000
+  },
+  "socialV2": {
+    "enabled": true,
+    "autoReplyCheckMs": 10000,
+    "agentPreset": "qq-chat-v2",
+    "provideRecommendations": true,
+    "tools": {
+      "getPrompt": true,
+      "getUnread": true,
+      "getRecent": true,
+      "socialState": true,
+      "sendGroup": false,
+      "sendPrivate": true,
+      "reply": true,
+      "sendBurst": false,
+      "sendMessage": true,
+      "waitMessages": true,
+      "feedback": false,
+      "getMyRecent": true,
+      "getMessageDetail": true,
+      "getActiveMembers": true,
+      "setWakeConfig": true,
+      "markRead": true,
+      "memory": true,
+      "slangQuery": false,
+      "slangSubmit": false,
+      "getImages": true,
+      "getForwardMsg": true,
+      "sendPoke": true,
+      "listStickers": true,
+      "getStickerImage": true,
+      "sendSticker": true,
+      "setStickerRemark": false,
+      "stickerNote": true,
+      "collectSticker": true,
+      "getSelfImage": true,
+      "sendVoice": true
+    },
+    "wake": {
+      "defaultMode": "diving",
+      "preSleepWaitEnabled": true,
+      "preSleepWaitMs": 300000,
+      "recommendedDefaultInfinite": true,
+      "sleepMinMs": 60000,
+      "sleepMaxMs": 0,
+      "recommendedSleepMinMs": 300000,
+      "recommendedSleepMaxMs": 7200000,
+      "recommendedProbability": 0.005,
+      "recommendedKeywords": [
+        "小鲸鱼"
+      ],
+      "recommendedAtMention": true,
+      "recommendedNameMention": true,
+      "recommendedQuestion": false,
+      "recommendedPoke": true,
+      "recommendedHint": "群里不用常来看：默认只有 @ 你、叫你名字、回你的消息、拍你才叫醒你。想多看就自己加关键词、开「提问」或调高普通消息概率；不想看就不看，偶尔瞄一眼也行。要潜水前可以先 qq_wait_for_messages 等一会儿（群里 1 分钟就够，私聊推荐 5 分钟），看有没有人接；需要等特定某人时可以设 triggers.speakerIds。",
+      "batchWindowMs": 2000,
+      "maxWakePerMinute": 3,
+      "maxWakePerHour": 40,
+      "noActionLimit": 3,
+      "maxWakeConfigReminders": 2,
+      "preSleepWaitGroupMs": 60000
+    },
+    "send": {
+      "burstEnabled": true,
+      "burstMaxMessages": 50,
+      "burstIntervalMinMs": 700,
+      "burstIntervalMaxMs": 2000,
+      "longGapProbability": 0.2,
+      "longGapMinMs": 5000,
+      "longGapMaxMs": 10000,
+      "maxSendPerMinute": 60,
+      "maxSendPerHour": 600,
+      "maxMessageChars": 3000,
+      "maxGapMs": 10000,
+      "gapBaseMs": 500,
+      "gapPerCharMs": 12,
+      "recommendedHint": "单条消息不要用空格断句，中文短句用逗号/顿号或直接连写；分条时每条都要读起来完整，不要把同一句话拆到两条里。发几条、隔多久、每条多长都由你定。一个事实：QQ 对长时间高速发消息的账号可能风控（限制发言甚至冻结）；桥接这边只留了一道防程序故障的保险（每分钟 60 条、每小时 600 条、一次最多 50 条），平时怎么发是你的事。",
+      "typingBaseMs": 1500,
+      "typingPerCharMs": 120,
+      "typingMaxMs": 6000
+    },
+    "wait": {
+      "defaultMs": 30000,
+      "minMs": 5000,
+      "maxMs": 600000,
+      "defaultQuietMs": 8000,
+      "minQuietAfterNewMs": 4000,
+      "minQuietAfterNewGroupMs": 10000
+    },
+    "sticker": {
+      "enabled": true,
+      "syncTtlMs": 60000,
+      "maxListCount": 100,
+      "includeInPrompt": true,
+      "promptMaxStickers": 60,
+      "collect": {
+        "enabled": true,
+        "maxPerMinute": 5,
+        "maxPerHour": 10,
+        "maxRemarkChars": 20
+      }
+    },
+    "voice": {
+      "enabled": true,
+      "dir": "audio",
+      "maxSeconds": 300,
+      "maxBytes": 20971520,
+      "maxPerMinute": 2,
+      "maxPerHour": 10,
+      "allowAbsolutePath": false,
+      "defaultVolume": 1,
+      "loudness": "normal",
+      "ffmpegPath": "",
+      "autoReadback": true
+    },
+    "proactive": {
+      "enabled": true,
+      "checkIntervalMinMs": 180000,
+      "checkIntervalMaxMs": 480000,
+      "idleThresholdMs": 0,
+      "probability": 0.6,
+      "missBonusStep": 0.08,
+      "missBonusCap": 0.5,
+      "peakFactor": 0.6,
+      "coldFactor": 1.4,
+      "ownerBoost": 1.3,
+      "groupCheckIntervalMinMs": 5400000,
+      "groupCheckIntervalMaxMs": 10800000
+    },
+    "feedback": {
+      "maxLength": 500,
+      "notifyOwnerOnError": false
+    },
+    "ownerAutoMove": {},
+    "context": {
+      "recentLimit": 200,
+      "unreadLimit": 30,
+      "contextWindow": 20,
+      "inlineWakeMessages": true,
+      "wakeMessageLimit": 12,
+      "wakeRecentLimit": 4,
+      "wakeMaxChars": 10000
+    },
+    "initialPromptMaxChars": 2000,
+    "media": {
+      "maxBytes": 20971520,
+      "maxPixels": 64000000,
+      "maxCount": 20
+    },
+    "qzone": {
+      "maxCommentPerDay": 20,
+      "daily": {
+        "hour": 22,
+        "minute": 30,
+        "enabled": true
+      }
+    }
+  },
+  "webSearch": {
+    "provider": "auto",
+    "baseURL": "",
+    "model": "deepseek-v4-flash",
+    "maxUses": 5,
+    "maxResults": 8,
+    "timeoutMs": 35000
+  },
+  "mom": {
+    "proxy": "http://127.0.0.1:7897"
+  },
+  "knownPeople": {
+    "10069": "克劳德姐姐"
+  },
+  "houseGroups": {
+    "10019": "小房子"
+  },
+  "slowGroups": {
+    "10020": {
+      "minWakeGapSec": 120,
+      "maxLines": 2,
+      "debounceSec": 15,
+      "lurkGapMin": 60
+    }
+  },
+  "fishMemoryKeys": [
+    "group:10020",
+    "group:10019"
+  ],
+  "houseTiming": {
+    "fishBatchSec": 10,
+    "fishOwnerBatchSec": 4,
+    "fishQuietSec": 12,
+    "sisterDebounceSec": 5,
+    "sisterMaxWaitSec": 30,
+    "sisterMinGapSec": 12,
+    "sisterOwnerYieldSec": 15,
+    "sisterAfterFishSec": 4
+  }
+}

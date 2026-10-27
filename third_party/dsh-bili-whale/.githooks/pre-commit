@@ -1,0 +1,40 @@
+#!/bin/sh
+# 提交前守门：把"绝不该进公开仓库"的东西挡在门外（2026-10-18 加）
+#
+# 为什么要有它：.gitignore 只挡**未跟踪**的文件 ✗，一旦手滑 `git add -A` 或 `git add -f`，
+# 凭据/日记/账本照样会被提交、被推上 GitHub，而且**删了也会留在历史里** ✗✗
+#
+# 启用方式（随仓库走，clone 后跑一次即可）：
+#   git config core.hooksPath .githooks
+#
+# ⚠️ 第一版教训：模式写成了 `whale-(log|night|wake)` → 把源码 `whale-night.mjs` 也拦了 ✗
+#    → 必须**锚到扩展名/结尾**（whale-night.json ✓ / whale-night.mjs ✗）。
+
+staged=$(git diff --cached --name-only)
+
+# ① 文件名本身就不许进（放过 *.example.*）
+bad_names=$(printf '%s\n' "$staged" \
+  | grep -Ei '(^|/)(credentials|quota|state|feedback|replied)\.json$|whale-log\.jsonl$|whale-night\.json$|whale-wake$|(^|/)\.env(\.|$)|(^|/)whale-diary[^/]*\.md$' \
+  | grep -v -i 'example')
+if [ -n "$bad_names" ]; then
+  echo "✗ 拒绝提交：这些文件不该进仓库 ——" >&2
+  printf '  %s\n' $bad_names >&2
+  echo "  （确实要提交请用 git commit --no-verify，并想清楚后果）" >&2
+  exit 1
+fi
+
+# ② 内容里不许有真 cookie / 真凭据（占位符 ${...} / xxx / *** 放过）
+for f in $staged; do
+  [ -f "$f" ] || continue
+  case "$f" in *.md|*.js|*.mjs|*.json|*.yml|*.yaml|*.html|*.txt) ;; *) continue ;; esac
+  if grep -Eq 'SESSDATA=[A-Za-z0-9%]{25,}' "$f"; then
+    echo "✗ 拒绝提交：$f 里疑似有真 cookie（SESSDATA= 后跟长串）" >&2
+    exit 1
+  fi
+  if grep -Eq 'bili_jct=[0-9a-f]{28,}' "$f"; then
+    echo "✗ 拒绝提交：$f 里疑似有真 bili_jct" >&2
+    exit 1
+  fi
+done
+
+exit 0

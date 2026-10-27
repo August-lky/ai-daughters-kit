@@ -1,0 +1,32 @@
+# ── 凭据与运行账本（绝不能进仓库）──────────────────────────────
+credentials.json
+*.credentials.json
+quota.json
+replied.json
+whale-night.json
+whale-wake
+whale-log.jsonl
+bili-whale.config.json
+state.json
+
+# ── 她的日子（私人内容）────────────────────────────────────
+whale-diary*.md
+*.diary.md
+
+# ── 运行产物 ────────────────────────────────────────────
+shots/
+out/
+node_modules/
+*.mp4
+*.jpg
+*.png
+!examples/**/*.png
+
+# ── 本机/编辑器 ─────────────────────────────────────────
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

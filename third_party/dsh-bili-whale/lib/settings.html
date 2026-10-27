@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>养鱼 · 设置</title>
+<style>
+  :root { --bg:#0f1116; --card:#171a21; --line:#262b36; --fg:#e6e8ee; --dim:#8b93a7; --ok:#4ade80; --bad:#f87171; --accent:#6ea8fe; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 "Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 12px; margin-bottom: 22px; }
+  section { background: var(--card); border:1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  section > h2 { font-size: 14px; margin: 0 0 12px; color: var(--accent); font-weight: 600; }
+  .row { display:flex; gap:10px; align-items:center; margin: 8px 0; flex-wrap: wrap; }
+  .row > label { min-width: 132px; color: var(--dim); font-size: 13px; }
+  input[type=text], input[type=password], input[type=number], input[type=time], select, textarea {
+    background:#0b0d12; border:1px solid var(--line); color:var(--fg); border-radius: 8px; padding: 7px 10px; font: inherit; min-width: 0;
+  }
+  input[type=text], input[type=password] { flex: 1; }
+  input[type=number] { width: 84px; }
+  textarea { width: 100%; min-height: 64px; }
+  button { background:#222833; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:7px 14px; cursor:pointer; font:inherit; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background:#1d4ed8; border-color:#1d4ed8; }
+  button.ghost { background:transparent; }
+  .hint { color: var(--dim); font-size:12px; }
+  .warn { color:#fbbf24; font-size:12px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .win { display:flex; gap:8px; align-items:center; margin:6px 0; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { border:1px solid var(--line); border-radius:999px; padding:4px 12px; cursor:pointer; user-select:none; font-size:13px; color:var(--dim); }
+  .chip.on { border-color: var(--accent); color: var(--fg); background:#1b2433; }
+  #status { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background:#1b2130; border:1px solid var(--line); padding:8px 16px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .2s; }
+  #status.show { opacity:1; }
+  .deps { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap; color: var(--dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🐟 养鱼 · 设置</h1>
+  <div class="sub">她一次醒来：筛 N 条 → 深读几条 → 写两本日记 → 把值得的 @ 你。<span id="cfgPath"></span></div>
+
+  <section>
+    <h2>① 账号</h2>
+    <div class="row"><label>B站 cookie</label><span id="credState" class="hint">读取中…</span>
+      <button class="ghost" id="btnDeps">依赖体检</button></div>
+    <div class="row"><label>SESSDATA</label><input type="password" id="sessdata" placeholder="粘贴 SESSDATA（不回显已保存的值）"></div>
+    <div class="row"><label>bili_jct</label><input type="password" id="bili_jct" placeholder="粘贴 bili_jct"></div>
+    <div class="row"><label>buvid3</label><input type="text" id="buvid3" placeholder="可留空"></div>
+    <div class="row"><label></label><button id="btnCookie">保存 cookie</button><span class="hint">只在本地保存，不回显</span></div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+    <div class="row"><label>主人 mid</label><input type="text" id="ownerMid" placeholder="填主人的 12 位数字 mid，或主页链接"></div>
+    <div class="row"><label>主人昵称</label><input type="text" id="ownerName" placeholder="分享评论要 @ 的名字（改了记得同步）"></div>
+    <div class="row"><label>工具目录</label><input type="text" id="toolsPath" placeholder=".../bilibili-tools/bili.mjs 的路径"></div>
+  </section>
+
+  <section>
+    <h2>② 作息</h2>
+    <div class="row"><label>窗口</label><span class="hint">每个窗口 = 一次醒来的机会（窗口内随机时刻）</span></div>
+    <div id="wins"></div>
+    <div class="row"><label></label><button class="ghost" id="addWin">+ 添加窗口</button></div>
+    <div class="row"><label>每天最多醒</label><input type="number" id="maxWakes" min="1" max="3"><span class="hint">1–3（硬上限 3，防烧白饭）</span></div>
+    <div class="row"><label>不想看的概率</label><input type="number" id="skipChance" min="0" max="95" step="5"><span class="hint">% —— "今天不想看"也是活人</span></div>
+    <div class="row"><label>每次筛 / 深读</label><input type="number" id="maxVideos" min="1" max="20"><span class="hint">条（筛只读文字不出图；深读含抽帧看画面）</span></div>
+  </section>
+
+  <section>
+    <h2>③ 偏好</h2>
+    <div class="row"><label>爱看</label><div class="chips" id="likeChips"></div></div>
+    <div class="row"><label>不爱看</label><div class="chips" id="dislikeChips"></div></div>
+    <div class="row"><label>自定义关键词</label><textarea id="keywords" placeholder="一行一个；留空 = 用标签生成的默认词"></textarea></div>
+  </section>
+
+  <section>
+    <h2>④ 日记</h2>
+    <div class="row"><label>总开关</label><input type="checkbox" id="diaryEnabled"></div>
+    <div class="row"><label>给你看的那本</label><input type="checkbox" id="diaryPublic"></div>
+    <div class="row"><label>她自己那本</label><input type="checkbox" id="diaryPrivate"><span class="hint">不加滤镜；你不主动要，她不主动推</span></div>
+    <div class="row"><label>每天推一条摘要</label><input type="checkbox" id="pushDaily"></div>
+    <div class="row"><label>推送方式</label>
+      <select id="notifyType">
+        <option value="stdout">不推送（只留在日志里）</option>
+        <option value="file">写到文件</option>
+        <option value="webhook">Webhook（飞书/钉钉/企业微信/QQ 机器人…）</option>
+        <option value="command">自定义命令</option>
+      </select>
+    </div>
+    <div class="row" id="notifyUrlRow"><label>Webhook 地址</label><input type="text" id="notifyUrl" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></div>
+    <div class="row" id="notifyCmdRow"><label>命令</label><input type="text" id="notifyCmd" placeholder="dsh-wechat-send &quot;$WHALE_NOTIFY_TEXT&quot;"></div>
+  </section>
+
+  <section>
+    <h2>⑤ 分享与倾听</h2>
+    <div class="row"><label>分享评论（@ 你）</label><input type="checkbox" id="shareOn"><span class="hint">每天合计 ≤</span><input type="number" id="shareDaily" min="0" max="20" style="width:70px"><span class="hint">条</span></div>
+    <div class="row"><label>评论区倾听</label><input type="checkbox" id="listenComment"><span class="hint">每</span><input type="number" id="listenInterval" min="60" style="width:84px"><span class="hint">秒查一次</span></div>
+    <div class="row"><label>同一个人只回一条</label><input type="checkbox" id="oncePerPerson"><span class="hint">30 天内不重复回同一人</span></div>
+    <div class="row"><label>直播间弹幕</label><input type="checkbox" id="listenLive"><input type="text" id="liveRoom" placeholder="房间号"></div>
+  </section>
+
+  <section>
+    <h2>今日状态</h2>
+    <div class="row"><label>今天</label><span id="stToday" class="hint">读取中…</span></div>
+    <div class="row"><label>今天的计划</label><span id="stPlan" class="hint">…</span></div>
+    <div class="row"><label></label><button class="ghost" id="btnStatus">刷新</button></div>
+  </section>
+
+  <section>
+    <h2>依赖体检</h2>
+    <div class="row"><button class="ghost" id="btnDeps2">跑一次</button><span class="hint">检查 cookie 能不能用 / ffmpeg / Node / 数据目录</span></div>
+    <div class="deps" id="depsOut">（还没跑）</div>
+  </section>
+
+  <div class="row" style="margin-top:18px"><button class="primary" id="btnSave">保存设置</button><span class="hint" id="saveHint"></span></div>
+</div>
+<div id="status"></div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const toast = (t) => { const s = $('status'); s.textContent = t; s.className = 'show'; setTimeout(() => s.className = '', 2200) }
+const api = async (p, opt) => { const r = await fetch(p, opt); return r.json() }
+
+const LIKE = ['DSH/AI 工具与插件','鬼畜与怀旧向剪辑','猫咪','Live2D/模型','B站生态八卦','数码硬件','游戏实况','影视解说']
+const DISLIKE = ['带货','擦边','标题党','纯搬运','政治社会争议','长教程']
+let cfg = null
+let likeSel = new Set(), dislikeSel = new Set()
+
+function chipRow(el, all, sel) {
+  el.innerHTML = ''
+  for (const name of all) {
+    const s = document.createElement('span')
+    s.className = 'chip' + (sel.has(name) ? ' on' : '')
+    s.textContent = name
+    s.onclick = () => { sel.has(name) ? sel.delete(name) : sel.add(name); s.classList.toggle('on') }
+    el.appendChild(s)
+  }
+}
+
+function renderWins(windows) {
+  const box = $('wins'); box.innerHTML = ''
+  windows.forEach((w, i) => {
+    const d = document.createElement('div'); d.className = 'win'
+    d.innerHTML = `<input type="time" value="${w.start}"> <span class="hint">–</span> <input type="time" value="${w.end}">
+      <button class="ghost" title="删除">✕</button>`
+    const [a, b, btn] = d.querySelectorAll('input,button')
+    a.onchange = () => { windows[i].start = a.value }
+    b.onchange = () => { windows[i].end = b.value }
+    btn.onclick = () => { windows.splice(i, 1); renderWins(windows) }
+    box.appendChild(d)
+  })
+}
+
+function fill(c) {
+  cfg = c
+  $('cfgPath').textContent = '配置：' + (c.__cfgPath || '')
+  $('ownerMid').value = c.owner?.mid ?? ''
+  $('ownerName').value = c.owner?.name ?? ''
+  $('toolsPath').value = c.toolsPath ?? ''
+  renderWins(c.night.windows)
+  $('maxWakes').value = c.night.maxWakesPerDay
+  $('skipChance').value = Math.round((c.night.skipChance ?? 0) * 100)
+  $('maxVideos').value = c.night.maxVideos
+  likeSel = new Set(c.preferences.like ?? []); dislikeSel = new Set(c.preferences.dislike ?? [])
+  chipRow($('likeChips'), LIKE, likeSel); chipRow($('dislikeChips'), DISLIKE, dislikeSel)
+  $('keywords').value = (c.preferences.keywords ?? []).join('\n')
+  $('diaryEnabled').checked = !!c.diary.enabled
+  $('diaryPublic').checked = !!c.diary.public
+  $('diaryPrivate').checked = !!c.diary.private
+  $('pushDaily').checked = !!c.diary.pushDaily
+  $('notifyType').value = c.notify.type || 'stdout'
+  $('notifyUrl').value = c.notify.url || ''
+  $('notifyCmd').value = c.notify.cmd || ''
+  syncNotifyRows()
+  $('shareOn').checked = (c.quota.shareDaily ?? 0) > 0
+  $('shareDaily').value = c.quota.shareDaily ?? 3
+  $('listenComment').checked = !!c.listen.comment
+  $('listenInterval').value = c.listen.commentIntervalSec ?? 300
+  $('oncePerPerson').checked = !!c.listen.oncePerPerson
+  $('listenLive').checked = !!c.listen.live
+  $('liveRoom').value = c.listen.liveRoom ?? ''
+}
+
+function syncNotifyRows() {
+  const t = $('notifyType').value
+  $('notifyUrlRow').style.display = t === 'webhook' ? '' : 'none'
+  $('notifyCmdRow').style.display = t === 'command' ? '' : 'none'
+}
+
+function collect() {
+  return {
+    owner: { mid: $('ownerMid').value.trim(), name: $('ownerName').value.trim() },
+    toolsPath: $('toolsPath').value.trim(),
+    night: {
+      windows: readWins(),
+      maxWakesPerDay: Number($('maxWakes').value) || 1,
+      skipChance: (Number($('skipChance').value) || 0) / 100,
+      maxVideos: Number($('maxVideos').value) || 5,
+      maxMinutes: cfg?.night?.maxMinutes ?? 20,
+    },
+    preferences: { like: [...likeSel], dislike: [...dislikeSel], keywords: $('keywords').value.split('\n').map(s => s.trim()).filter(Boolean) },
+    diary: { enabled: $('diaryEnabled').checked, public: $('diaryPublic').checked, private: $('diaryPrivate').checked, pushDaily: $('pushDaily').checked },
+    notify: { type: $('notifyType').value, url: $('notifyUrl').value.trim(), cmd: $('notifyCmd').value.trim() },
+    quota: { shareDaily: $('shareOn').checked ? (Number($('shareDaily').value) || 3) : 0, daily: cfg?.quota?.daily ?? 2 },
+    listen: { comment: $('listenComment').checked, commentIntervalSec: Number($('listenInterval').value) || 300, oncePerPerson: $('oncePerPerson').checked, live: $('listenLive').checked, liveRoom: $('liveRoom').value.trim() },
+  }
+}
+
+function readWins() {
+  return [...$('wins').querySelectorAll('.win')].map(d => ({ start: d.querySelectorAll('input')[0].value, end: d.querySelectorAll('input')[1].value }))
+}
+
+async function load() {
+  const r = await api('/dsh-bili/api/settings')
+  if (!r.ok) { toast('读取失败：' + (r.error || '')); return }
+  const c = r.config
+  c.__cfgPath = r.configPath || ''
+  fill(c)
+  const cs = r.credentials
+  // ⚠️ 不用 innerHTML：颜色用 className 表达，文字走 textContent（2026-10-18 修，防注入）
+  {
+    const el = $('credState')
+    el.textContent = cs.present ? (cs.hasSess && cs.hasJct ? '已配置（未验证）' : '字段不全') : '未配置'
+    el.className = !cs.present ? 'bad' : (cs.hasSess && cs.hasJct ? 'ok' : 'warn')
+  }
+  if (cs.present && cs.hasSess && cs.hasJct) {
+    // 顺手跑一次体检（真验 cookie）
+    runDeps()
+  }
+}
+
+async function runDeps() {
+  $('depsOut').textContent = '检查中…'
+  const r = await api('/dsh-bili/api/deps')
+  if (r.error) { $('depsOut').textContent = '✗ ' + r.error; return }
+  $('depsOut').textContent = (r.items || []).map(i => `${i.ok ? '✓' : '✗'} ${i.name} — ${i.detail || ''}`).join('\n') + (r.ok ? '\n\n全部可用 ✓' : '\n\n有项不可用 ✗')
+  const cookie = (r.items || []).find(i => i.name === 'B站 cookie')
+  if (cookie) {
+    // ⚠️ cookie.detail 里可能带 B站昵称（外部数据）→ 必须 textContent，不能拼 HTML（2026-10-18 修）
+    const el = $('credState')
+    el.textContent = String(cookie.detail ?? '')
+    el.className = cookie.ok ? 'ok' : 'bad'
+  }
+}
+
+$('btnDeps').onclick = runDeps
+$('btnDeps2').onclick = runDeps
+$('addWin').onclick = () => {
+  const w = readWins(); w.push({ start: '20:00', end: '22:00' })
+  cfg.night.windows = w; renderWins(w)
+}
+$('notifyType').onchange = syncNotifyRows
+$('btnCookie').onclick = async () => {
+  const body = { sessdata: $('sessdata').value.trim(), bili_jct: $('bili_jct').value.trim(), buvid3: $('buvid3').value.trim() }
+  if (!body.sessdata || !body.bili_jct) { toast('SESSDATA 和 bili_jct 必填'); return }
+  const r = await api('/dsh-bili/api/cookie', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  if (!r.ok) { toast('保存失败：' + (r.error || '')); return }
+  $('sessdata').value = ''; $('bili_jct').value = ''; $('buvid3').value = ''
+  toast('cookie 已保存，开始体检…')
+  await runDeps()
+}
+$('btnSave').onclick = async () => {
+  const body = { config: collect() }
+  const r = await api('/dsh-bili/api/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  if (!r.ok) { toast('保存失败：' + (r.error || '')); return }
+  cfg = r.config
+  toast(r.warn ? '已保存（⚠️ ' + r.warn + '）' : '已保存 ✓')
+  $('saveHint').textContent = r.warn || ''
+  loadStatus()
+}
+
+async function loadStatus(){
+  const r = await api('/dsh-bili/api/status')
+  if(!r.ok){ $('stToday').textContent = '读取失败'; return }
+  $('stToday').textContent = `分享 ${r.shares}/${r.sharesMax} 条 · 今天发言 ${r.commentsToday} 条 · 判重记了 ${r.repliedPeople} 人`
+  const p = r.plan
+  $('stPlan').textContent = p
+    ? `${p.date} → ${p.action}${p.atText ? ' @ ' + p.atText : ''}（今天已醒 ${p.wakes} 次${p.windows.length ? '，用过窗口 ' + p.windows.join(', ') : ''}）`
+    : '今天还没排计划'
+}
+$('btnStatus').onclick = loadStatus
+loadStatus()
+load()
+</script>
+</body>
+</html>

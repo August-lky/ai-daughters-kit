@@ -1,0 +1,20 @@
+# 运行时状态、本机配置、令牌：永远不提交
+node_modules/
+state/
+**/state/
+config.json
+.env
+*.log
+*.bak
+*.bak-*
+__pycache__/
+*.pyc
+browser-profile/
+# 她们自己的东西（人格、记忆、聊天记录）：装好后放在本机，不进仓库
+bridge/roles/*.md
+!bridge/roles/README.md
+bridge/sister/persona.md
+bridge/sister/home/
+bridge/sister/聊天记录/
+bridge/memory/*.md
+bridge/memory/vectors.db
