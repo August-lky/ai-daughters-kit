@@ -211,7 +211,7 @@ export function freshBili(rows, since) {
   return [...byBv.values()].sort((a, b) => a.at - b.at);
 }
 
-/** 下次自己醒：她定的（30–300 分钟）或随机 60–120 分钟；落在北京时间 0:30–8:30 就挪到早上 8:30 之后。 */
+/** 下次自己醒：她定的（30–300 分钟）或随机 60–120 分钟。几点睡几点起她自己定（「去睡了：…」）；quietNight 默认关，只给测试用。 */
 export function nextHeartbeatAt(nowMs, skewMs, wantMin = null, rand = Math.random, { quietNight = false } = {}) {
   const min = wantMin ? Math.min(300, Math.max(30, wantMin)) : 60 + Math.floor(rand() * 60);
   let at = nowMs + min * 60e3;
@@ -1080,7 +1080,7 @@ async function main() {
   /**
    * 水群（2026-10-24 主人问「她也会潜水冒泡水群吗」）：没人叫她，但群里聊了一阵（攒够 lurkMinMsgs 条新的、
    * 离上次路过至少 lurkGapMin 分钟），等这一波说完 15 秒，按概率叫她路过看一眼——想插就插，不想就接着潜。
-   * 没中就下次概率高一点（跟妹妹的主动机会一个思路）；夜里 0:30–8:30 不水。
+   * 没中就下次概率高一点（跟妹妹的主动机会一个思路）；她睡着时不水。
    */
   const lurkTimers = {};
   function maybeLurk(gid) {
@@ -1182,7 +1182,7 @@ async function main() {
   }
 
   // 自己醒（2026-10-24 主人：像妹妹一样按自己的意愿找她、找老大、自己学东西、自己改自己）。
-  // 没人找她的时候，隔一阵（她自己定 30–300 分钟，没定就 60–120 分钟，夜里 0:30–8:30 不醒）醒来一次，干什么她自己决定。
+  // 没人找她的时候，隔一阵（她自己定 30–300 分钟，没定就 60–120 分钟；夜里不另设限制，睡不睡她自己定）醒来一次，干什么她自己决定。
   if (!st.nextHeartbeatAt) st.nextHeartbeatAt = nextHeartbeatAt(Date.now(), clockSkewMs());
   // 2026-10-24 起不再替她把夜里挪走：以前排到第二天早上的那次，挪回一两个小时后
   if (st.nextHeartbeatAt - Date.now() > 5 * 3600e3 && !st.sleep) st.nextHeartbeatAt = nextHeartbeatAt(Date.now(), clockSkewMs());
