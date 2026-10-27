@@ -91,7 +91,7 @@
 3. **写人格**：用 `templates/` 的骨架写你女儿的角色卡，放进 `bridge/roles/`；姐姐的放在 `bridge/sister/persona.md`。
 4. **换名字和路径**：代码里写着「小鲸鱼」「姐姐」「主人」「小房子」，还有 `E:\qq-bridge`、`E:\SnowLuma` 这样的绝对路径。全局替换成你自己的。
 5. **装插件**：`third_party/` 里的插件按各自 README 装进 DSH。抖音要一个专门登录的抖音号，B 站要 Cookie，都只存在你本机。
-6. **跑测试**：`bridge/scripts/test-*.mjs` 大多不需要连 QQ，可以先跑一遍确认环境。
+6. **跑测试**：`bridge/scripts/test-*.mjs` 大多不需要连 QQ，可以先跑一遍确认环境。实测（2026-10-26，干净克隆 + `npm ci` + 复制 `config.ours.example.json` 为 `config.json`）：79 个里 63 个通过。剩下 16 个在原机上也不过：一部分是上游的老测试，没跟上本机改动；一部分要连真的 SnowLuma，或者要你写好的人格卡。
 7. **启动**：`bridge/start-services.ps1` 会按顺序拉起 QQ、SnowLuma、桥接、记忆服务、姐姐。
 
 ---
