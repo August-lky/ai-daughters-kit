@@ -245,7 +245,7 @@ function validateLimit(value, name) {
  * 返回 `{ok:true,result}` 或 `{ok:false,error,retryable}`；retryable 只标记网络层失败
  * （连接失败/超时/正文中断），大小与图片签名等策略性拒绝不重试。
  */
-function attemptOnce(url, address, limit, binary, budgetMs) {
+function attemptOnce(url, address, limit, binary, budgetMs, bodyDeadline = 0) {
   return new Promise((resolve) => {
     let settled = false;
     let req;
@@ -258,12 +258,13 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
     };
     const fail = (error, retryable) => settle({ ok: false, error, retryable: retryable === true });
     const done = (result) => settle({ ok: true, result });
-    const timer = setTimeout(() => {
+    const onTimeout = () => {
       const error = new Error(`请求超时：${url.hostname}`);
       fail(error, true);
       req?.destroy(error);
       response?.destroy();
-    }, budgetMs);
+    };
+    let timer = setTimeout(onTimeout, budgetMs);
     const mod = url.protocol === 'https:' ? https : http;
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     try {
@@ -283,6 +284,12 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
         timeout: budgetMs,
       }, (res) => {
         response = res;
+        // 2026-10-29 主人（看图 D1）：多地址时单次预算只管到「连上 + 收到响应头」；正文开始传了就按总时限下完，
+        // 不然一张大 GIF 下到 8 秒被掐断、换下一个地址从头再下。
+        if (bodyDeadline && !settled) {
+          clearTimeout(timer);
+          timer = setTimeout(onTimeout, Math.max(250, bodyDeadline - Date.now()));
+        }
         res.on('error', (error) => fail(error, true));
         res.on('aborted', () => fail(new Error('响应体读取中断'), true));
         res.on('close', () => {
@@ -293,6 +300,15 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
         if (REDIRECT_STATUSES.has(statusCode)) {
           done({ statusCode, redirect: String(res.headers.location || '') });
           // 不下载重定向正文：攻击者可以发送无限正文消耗连接和带宽。
+          res.destroy();
+          return;
+        }
+        // 响应头已经说了比上限大：不用下完再拒（2026-10-29：大 GIF 白下 20MB 才知道超了）
+        const declared = Number(res.headers['content-length']);
+        if (binary && statusCode >= 200 && statusCode < 300 && Number.isFinite(declared) && declared > limit) {
+          const error = new Error(`图片超过大小限制（${limit} 字节）`);
+          error.code = 'TOO_LARGE';
+          fail(error, false);
           res.destroy();
           return;
         }
@@ -314,7 +330,9 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
           if (!binary) { appendText(decoder.write(chunk)); return; }
           size += chunk.length;
           if (size > limit) {
-            fail(new Error(`图片超过大小限制（${limit} 字节）`), false);
+            const error = new Error(`图片超过大小限制（${limit} 字节）`);
+            error.code = 'TOO_LARGE'; // 调用方据此「第一次就放弃」，不再按每个 rkey 重下（见 image-view.js）
+            fail(error, false);
             res.destroy();
             return;
           }
@@ -352,19 +370,19 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
  * 而「第一个地址是坏的 IPv6」不会再白等 20 秒。
  * 所有地址都失败时抛最后一个错误（保留原始错误文案，便于日志排查）。
  */
-async function requestOnce(url, addresses, limit, binary = false) {
+async function requestOnce(url, addresses, limit, binary = false, totalMs = REQUEST_TIMEOUT_MS) {
   const list = (Array.isArray(addresses) ? addresses : [addresses]).filter(Boolean);
   if (!list.length) throw new Error(`没有可用地址：${url.hostname}`);
-  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+  const deadline = Date.now() + totalMs;
   let lastError = null;
   const attempts = Math.min(list.length, MAX_ADDRESS_ATTEMPTS);
   for (let i = 0; i < attempts; i += 1) {
     const remaining = deadline - Date.now();
     if (remaining <= 250) break;
     const budget = list.length === 1
-      ? REQUEST_TIMEOUT_MS
+      ? totalMs
       : Math.min(ATTEMPT_TIMEOUT_MS, remaining);
-    const outcome = await attemptOnce(url, list[i], limit, binary, budget);
+    const outcome = await attemptOnce(url, list[i], limit, binary, budget, list.length === 1 ? 0 : deadline);
     if (outcome.ok) return outcome.result;
     lastError = outcome.error;
     if (!outcome.retryable) throw outcome.error;
@@ -425,10 +443,14 @@ export function looksLikeImageBuffer(buf) {
 export async function safeFetchBuffer(urlString, maxBytes = 8 * 1024 * 1024, options = {}) {
   const requireImage = options?.requireImage !== false;
   validateLimit(maxBytes, 'maxBytes');
+  // options.timeoutMs：每个地址的总时限（默认 20 秒）。2026-10-29 主人：大 GIF 20 秒下不完，看图那边放到 40 秒。
+  const totalMs = Number.isFinite(Number(options?.timeoutMs)) && Number(options.timeoutMs) > 0
+    ? Math.min(120000, Math.max(1000, Math.round(Number(options.timeoutMs))))
+    : REQUEST_TIMEOUT_MS;
   const MAX_REDIRECTS = 5;
   let { url, addresses } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, addresses, maxBytes, true);
+    const result = await requestOnce(url, addresses, maxBytes, true, totalMs);
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();

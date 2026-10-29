@@ -133,7 +133,7 @@ function dshwvAudio() {
 }
 var dshwvAudioBuffers = {} // url -> Promise<AudioBuffer>（同一片段不重复下载/解码）
 var dshwvAudioDecoded = {} // url -> AudioBuffer（解码完成后**同步可读**：起播走同步路径的关键）
-// v752：音频失败**必须看得见**。原来所有 fetch/decode 失败都被 `.catch(function(){})` 吞掉，
+// v752：音频失败**必须群友252**。原来所有 fetch/decode 失败都被 `.catch(function(){})` 吞掉，
 // 于是"没声音"在控制台里一点痕迹都没有，只能靠猜。现在每个 URL 只 warn 一次，
 // 并把最后一次错误留在 dshwvAudioLastErr 里。
 var dshwvAudioLastErr = null
@@ -1825,7 +1825,7 @@ function taskEndTogglePin(v) {
 // 任务结束音 / 提问音 / 授权音三处共用；不改写 playTaskEndSound 里那段已验证的取值逻辑
 // （frag: 片段 / preset: 预设 / grp: 音效组 + 备用路由），而是**临时替换它读取的绑定与音量再还原**。
 // v761：音量取值统一走这里 —— **绝不能用 `Number(x) || 0.9`**：0 是合法音量，
-// 但 `||` 把它当假值 ⇒ 滑块拖到 0 会变成 0.9（用户真机实测到的 bug）。
+// 但 群友77 把它当假值 ⇒ 滑块拖到 0 会变成 0.9（用户真机实测到的 bug）。
 // 这里对 0 / NaN / 越界都给出确定行为：0 就是静音，NaN 才回落默认值。
 function soundVolClamped(fallback) {
   var v = Number(soundVol)
@@ -3423,7 +3423,7 @@ function openSoundSettingsPanel() {
         for (var j = 0; j < g.items.length; j++) {
           var it = g.items[j] || {}
           try { if (it.el) it.el.disabled = off } catch (err) {}
-          // 自绘下拉：原生 select 是隐藏的，看得见的是它自己那颗按钮 ⇒ 两者都要处理
+          // 自绘下拉：原生 select 是隐藏的，群友252的是它自己那颗按钮 ⇒ 两者都要处理
           try { if (it.drop && typeof it.drop.sync === 'function') it.drop.sync() } catch (err) {}
           sndDim(it.drop && it.drop.btn ? it.drop.btn : it.el, off)
           sndDim(it.label, off)

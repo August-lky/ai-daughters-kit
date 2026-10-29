@@ -92,7 +92,7 @@ $dshInstallDirectory = 'C:\Apps\DSH Desktop' # 替换为实际安装目录
 
 音频可不接入；关闭时无需 MiMo/MiniMax Key。本地 Whisper 是可选本地对白转写；MiMo、MiniMax 是可选云端后端，不是 DSH 主模型的必需配置。插件填写入口为“设置 → 刷抖音 → 音频与密钥”：分别填写 MiMo API Key 或 MiniMax API Key，点击对应保存按钮。留空沿用原有值；界面只显示已配置状态及配置来源，不回显 Key。保存共用本机媒体 `.env`（明文），与独立软件即时共用，不自动开启音频或调用云端；使用云后端还需本人选择后端并保存启用设置。进程同名环境变量优先，页面会提示覆盖状态。依赖与限制见 [media/README.md](../media/README.md)，保存开关不下载模型或安装运行环境。
 
-表情和分享卡片可采样实际画面；分享视频仍受视频时限约束。封面不等于看完整条，少量帧不等于听懂声音。未支持的普通图片、收到的语音等类型不能假称已理解。
+表情和群友148可采样实际画面；分享视频仍受视频时限约束。封面不等于看完整条，少量帧不等于听懂声音。未支持的普通图片、收到的语音等类型不能假称已理解。
 
 ## 维护接口与来源
 
@@ -134,7 +134,7 @@ v7 原生 SDK 的原有 25 项与命令新增 7 项合计 32／32 通过，均�
 
 真人私信发送已做一条本人授权的明确功能测试：`confirmed=true` 且二次读取 `persisted=true`，见 `verification/chat-human-send-live.json`。这证明该次发送与回读，不证明收到新消息后的自动模型回复已由真人触发。
 
-真实表情和分享卡片的精准截取、公开 URL 解析通过；一张精确表情截图已送入真实 DeepSeek 并生成回复，没有向真人发送，见 `verification/chat-rich-api-live.json`。两位联系人真实只读回查确认时间顺序、最新端及消息 ID 稳定，见 `verification/chat-chronology-readonly-live.json`。2026-10-15 又单独完成上述 DSH 原生表情附件验收；图文仍只到封面、元数据和 URL。
+真实表情和群友148的精准截取、公开 URL 解析通过；一张精确表情截图已送入真实 DeepSeek 并生成回复，没有向真人发送，见 `verification/chat-rich-api-live.json`。两位联系人真实只读回查确认时间顺序、最新端及消息 ID 稳定，见 `verification/chat-chronology-readonly-live.json`。2026-10-15 又单独完成上述 DSH 原生表情附件验收；图文仍只到封面、元数据和 URL。
 
 真实 API、DSH 两个专用抖音页到期后由后台检查暂停通过，观测延迟为 2652 毫秒（约 2.65 秒），原策略已恢复，见 `verification/video-limits-live.json`；这是本次观测值，不保证零延迟。Whisper 本地合成 WAV、WebM 对白转写通过，实际猫咪视频已采到 3 秒音轨但没有有效对白，ASR 准确性未验；MiMo/MiniMax 云联调未做，音频默认关闭。
 

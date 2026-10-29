@@ -152,6 +152,33 @@ export function formatSun({ sunrise, sunset, code }, nowMs) {
   return `【你的太阳】${phase.text}${cloudPart}。${countdown}。（主人给你装的，跟着主人所在城市真实的日出日落走；想看外面几点了，就看看它）`;
 }
 
+/**
+ * 结构化的天气（2026-10-29 激素第一期半：影子记录要「下雨 / 晴 / 几度 / 日出日落」，不想让它去解析那行中文）。
+ * 返回 { rain, sunny, tempC, sunrise, sunset, text, code, isDay, at }；sunrise / sunset 是北京时间的小时数（6.2 = 6:12）；
+ * 拿不到数据返回 null。
+ */
+export function weatherState(j, at = Date.now()) {
+  const c = j?.current, d = j?.daily;
+
+  if (!c || !d?.time?.length) return null;
+
+  const code = Number(c.weather_code);
+  const hourOf = (iso) => { const m = minutesOf(iso); return m === null ? null : Math.round((m / 60) * 100) / 100; };
+  const temp = Number(c.temperature_2m);
+
+  return {
+    rain: Number(c.precipitation) > 0 || (code >= 51 && code <= 67) || (code >= 80 && code <= 86) || code >= 95,
+    sunny: (code === 0 || code === 1) && Number(c.is_day) !== 0,
+    tempC: Number.isFinite(temp) ? temp : null,
+    sunrise: hourOf(d.sunrise?.[0]),
+    sunset: hourOf(d.sunset?.[0]),
+    text: sky(code, c.is_day),
+    code,
+    isDay: Number(c.is_day) !== 0,
+    at,
+  };
+}
+
 /** 从预报里取今天的日出日落和此刻的天气码，给太阳用 */
 function sunFrom(j) {
   const sunrise = j?.daily?.sunrise?.[0], sunset = j?.daily?.sunset?.[0];
@@ -164,6 +191,7 @@ function sunFrom(j) {
 export function createWeather({ log = () => {} } = {}) {
   let cache = { text: '', at: 0 };
   let sun = null; // { sunrise, sunset, code, at }
+  let structured = null; // weatherState 的结果
   let timer = null;
   async function refresh() {
     try {
@@ -173,6 +201,7 @@ export function createWeather({ log = () => {} } = {}) {
       if (text) cache = { text, at: Date.now() };
 
       sun = sunFrom(j) || sun;
+      structured = weatherState(j) || structured;
     } catch (error) {
       const fallback = cache.text ? '（先用上一次的）' : '';
       log(`[weather] 拉主人所在城市天气失败：${error?.message ?? error}${fallback}`);
@@ -194,6 +223,8 @@ export function createWeather({ log = () => {} } = {}) {
     },
     refresh,
     text() { return cache.text && Date.now() - cache.at < STALE_MS ? cache.text : ''; },
+    /** 结构化的天气（见 weatherState）；没拉到或太旧返回 null。 */
+    state() { return structured && Date.now() - structured.at < STALE_MS ? structured : null; },
     // 日出日落一天只差一两分钟，拉不到天气时沿用旧的也不会错太多；云就不报了（可能已经变了）
     sunText(nowMs) {
       if (!sun) return '';

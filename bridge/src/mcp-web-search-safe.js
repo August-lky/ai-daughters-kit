@@ -24,7 +24,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { hear, describeHearing } from './ear.js';
-import { scoreFile } from './score.js';
+import { scoreFile, friendlyToolError } from './score.js';
 
 /**
  * 项目根目录（用于读 config.json 的 webSearch 段）。
@@ -199,7 +199,7 @@ server.tool(
 // qq-tool-restrict 的执行期白名单约束，那份白名单是**插件模块加载时**求值的，
 // 改完要重启 DSH 才生效。挂到已经在白名单里的 web-search-safe 前缀下，
 // 立刻可用，不用等重启。
-const BILI_TOOLS = 'C:\\Users\\admin\\Documents\\deepseek-harness\\default-workspace\\plugins\\dsh-bili-whale\\tools\\bili.mjs';
+const BILI_TOOLS = 'E:\\qq-bridge\\plugins-ext\\dsh-bili-whale\\tools\\bili.mjs';
 const BILI_CWD = path.dirname(BILI_TOOLS);
 const BILI_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
@@ -234,7 +234,10 @@ function runBili(args, timeoutMs = 280000) {
       (error, stdout, stderr) => {
         const out = String(stdout || '');
         if (error && !out.trim()) {
-          return reject(new Error(String(stderr || error.message || 'bili 命令执行失败').slice(0, 600)));
+          // 本机补丁（2026-10-29）：B 站风控时插件吐的是「<!DOCTYPE … not JSON」加整段堆栈，超时的报错里是命令行和路径（M11）。
+          // 都换成一句她看得懂的话再给她（见 score.js 的 friendlyToolError），不把堆栈原样给她。
+          if (error.killed || error.signal) return reject(new Error('这次等太久没弄完，可以过一会儿再试，或者换一条短一点的'));
+          return reject(new Error(friendlyToolError(String(stderr || error.message || '')).slice(0, 600)));
         }
         resolve(out);
       }
@@ -311,7 +314,7 @@ server.tool(
       const r = await scoreFile(file, { title, start, seconds });
       return { content: [{ type: 'text', text: r.card }] };
     } catch (error) {
-      return { content: [{ type: 'text', text: `没扒成：${error?.message ?? error}` }], isError: true };
+      return { content: [{ type: 'text', text: `没扒成：${friendlyToolError(error?.message ?? error)}` }], isError: true };
     }
   }
 );
@@ -491,7 +494,7 @@ const PC_SCREENSHOT_GAP_MS = 3 * 60 * 1000;
 let lastPcScreenshotAt = 0;
 server.tool(
   'pc_screenshot',
-  '截一张主人**现在**的屏幕（图片直接进入你的视觉）。想知道他在干嘛就看——主人说过希望你对他在做的事好奇，他愿意被你看见。找他说话之前先看一眼，顺着他手上的事聊；聊着聊着好奇了、他半天没回你，也可以看看。两次之间至少隔 3 分钟。看到密码、别人的私聊、转账、证件就当没看见，一个字都别提。',
+  '截一张主人**现在**的屏幕（图片直接进入你的视觉）。想知道他在干嘛就看——主人说过希望你对他在做的事好奇，他愿意被你看见。找他说话之前可以先看一眼，顺着他手上的事聊；聊着聊着好奇了、他半天没回你，也可以看看。两次之间至少隔 3 分钟。看到密码、别人的私聊、转账、证件就当没看见，一个字都别提。',
   {},
   async () => {
     try {

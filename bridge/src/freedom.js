@@ -201,11 +201,12 @@ export function createNotePage({ file, historyDir, maxChars, keep, now = () => D
     try { return fs.readdirSync(historyDir).filter((f) => /\.md$/i.test(f)).sort(); } catch { return []; }
   }
 
-  /** 塞进唤醒提示的那一段：有就原样带上，没有就一句"可以开始写"。 */
-  function promptBlock() {
+  /** 塞进唤醒提示的那一段：有就原样带上，没有就一句"可以开始写"。
+   *  extra：2026-10-29 记忆统一后便签所有会话都带，不是主人私聊时在标题后面加一句注明（有些是私聊里记的），内容原样。 */
+  function promptBlock(extra = '') {
     const cur = read();
     if (!cur.exists || !cur.text.trim()) return `${L.title}${L.empty}`;
-    return `${L.title}\n${cur.text.trim()}`;
+    return `${L.title}\n${extra ? `${extra}\n` : ''}${cur.text.trim()}`;
   }
 
   return { read, write, append, history, promptBlock, file, historyDir, maxChars, keep };
@@ -225,7 +226,7 @@ export function createSelfNote({ file, historyDir, maxChars = SELF_NOTE_MAX_CHAR
 
 /**
  * 便签（她的工作记忆）：正在聊什么、刚被告知什么、答应了还没做的、没聊完的线头。
- * 只在主人私聊的唤醒里带（里面可能有主人的私事）；搬家时原样带走。
+ * 2026-10-29 老大（记忆统一）：所有会话的唤醒都带；非主人私聊里带的时候注明「有些是私聊里记的」，说不说她自己掂量。搬家时原样带走。
  */
 export function createStickyNote({ file, historyDir, maxChars = STICKY_NOTE_MAX_CHARS, keep = STICKY_NOTE_HISTORY_KEEP, now } = {}) {
   return createNotePage({
@@ -355,4 +356,21 @@ export function goToListText(items, { currentKey = '' } = {}) {
   const rows = (Array.isArray(items) ? items : []).filter((it) => it && it.key && it.key !== currentKey);
   if (!rows.length) return '现在没有别的会话可去。';
   return `你现在能去的会话：\n${rows.map((it) => `- ${it.key}${it.title ? `（${it.title}）` : ''}${it.sleeping ? '（你在睡觉：只会把话留在那边）' : ''}`).join('\n')}`;
+}
+
+/**
+ * 睡到自然醒（2026-10-29 老大：「睡觉也不定死了，根据激素走」）：qq_sleep 不填时间（until、hours 都没有）、until 填 "natural" / "自然醒"、或 natural:true，就是睡到自然醒。
+ * 睡多久由激素的睡眠压力决定（src/hormones.js naturalWakeDue），这里只管：要不要自然醒、最短 / 最长睡多久。
+ * 她自己填了具体钟点或小时数的，照旧按她的（resolveSleepUntil）。
+ */
+export function wantsNaturalSleep({ until, hours, natural } = {}) {
+  if (natural === true) return true;
+  const u = String(until ?? '').trim().toLowerCase();
+  if (u === 'natural' || u === '自然醒') return true;
+  return (until === undefined || until === null || u === '') && (hours === undefined || hours === null || hours === '');
+}
+
+/** 自然醒这一觉的窗口：最短 minH 小时之前不醒，最长 maxH 小时一定醒（防故障，默认 14）。 */
+export function naturalSleepWindow(nowMs, { minH = 1, maxH = SLEEP_MAX_HOURS } = {}) {
+  return { untilMs: nowMs + maxH * 3600e3, minUntilMs: nowMs + minH * 3600e3, natural: true };
 }

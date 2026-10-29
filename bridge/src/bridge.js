@@ -33,12 +33,18 @@ import { resolvePriceTable } from './model-prices.js';
 import { mirrorText, fishLinesFromToolCalls } from './mirror.js';
 import {
   NEXT_WAKE_MIN_MINUTES, SLEEP_MAX_HOURS, countTrailingSelf, createSelfNote, createStickyNote, goToListText, handoffRecentLines,
-  normalizeNextWakeMinutes, ownerIdleFactsText, ownerIdleVerdict, planGoTo, proactiveDelayMs, recentSaidBlock, resolveSleepUntil, sleepDurationText
+  normalizeNextWakeMinutes, ownerIdleFactsText, ownerIdleVerdict, planGoTo, proactiveDelayMs, recentSaidBlock, resolveSleepUntil, sleepDurationText,
+  wantsNaturalSleep, naturalSleepWindow
 } from './freedom.js';
+// 2026-10-29 老大：「困」提前从影子里放出来（唤醒里带一句身体感受），睡觉可以睡到自然醒（激素的睡眠压力回落才醒）
+import { sleepyFeel, naturalWakeDue } from './hormones.js';
 import { createTokenLedger } from './token-ledger.js';
 import { createExplorer, readGrowth, appendGrowth } from './whale-explore.mjs';
 import { createWeather } from './weather.mjs';
-import { createEpisodeStore, defaultLabel, moodSnapshot } from './episodes.js';
+import { createEpisodeStore, defaultLabel } from './episodes.js';
+// 2026-10-29 大脑方案下半：心情的算法收进 mood.js（两人共用）；按话题想起 / 记错了 / 睡前整理建议走 brain-client.js（检索服务）
+import { buildMoodLine, moodHandoffText, moodWithSwing, readMoodFile, readMoodWithPush, moodPushFile } from './mood.js';
+import { BRAIN_SERVICE, brainDemote, brainRecall, brainRememberMoment, brainTidy, correctionReminder, formatRecallBlock, isMemoryCorrection, recallQueryFromMessages } from './brain-client.js';
 import { createMomMailbox } from './mom-mailbox.js';
 import { migrateFishMemory } from './fish-move.js';
 import {
@@ -68,16 +74,43 @@ import {
 } from './sticker-lib.js';
 import { createAsleepLog } from './asleep-log.js';
 import { createImpressions, apologizing } from './impressions.js';
+import { createBrains } from './brains.js';
+// 2026-10-29 老大：她们俩的网页（public/daughters.html）。实时区缓冲只在内存里（不落盘）；数据读取全是只读。
+import { createLiveBuffer } from './live-buffer.js';
+import { elsewhereBlock } from './elsewhere.js';
+import { buildSelfView, readHormoneLevels } from './self-view.js';
+import { createDaughtersData } from './daughters-data.js';
+import { createDaughtersConsole, isDaughtersPath, isDaughtersPage } from './daughters-console.js';
+import { novelWakeLine } from './novel-tools.js'; // 2026-10-29 第五批：唤醒里提一句最近在写的合写书
+// 2026-10-29 第五批：激素影子记录（只记录、不触发任何行为；老大同意先记一周校准）和聊天记录（给索引看的原话，跟姐姐一样）
+import { createHormoneFeed, createMoodPusher, incomingHormoneEvents, sentHormoneEvent, createNoveltyTracker, toolHormoneEvents, moodHormoneEvent, weatherHormoneEvents, loadFishInterests, HORMONE_REFRESH } from './hormone-feed.js';
+import { createChatLog, pickGroupName, sisterGroupNames, whoLabel } from './chatlog.js';
 import { startDouyinPageWatchdog } from './douyin-page-watchdog.js';
 import { hearQqRecord } from './ear.js';
-import { shrinkImage } from './image-shrink.js';
+// 2026-10-29 主人（大整理第二批）：看图（抽帧 / 缩图 / 下载）跟姐姐共用 image-view.js，原来这里的 shrinkImage / animateToSheet / shrinkStillImage 都并过去了
+import { viewImage, createImageDownloader, DEFAULT_FFMPEG } from './image-view.js';
 import { loadFishCatalog, findFish, searchFish, describeFish, fishLabel, getFishGif } from './fish-stickers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const STATE_DIR = path.join(ROOT, 'state');
+// 2026-10-29 大脑方案：两个人的脑子在哪，统一从 brains.js 取（不再各处写死 memory/、Rambling/、state/episodes）。
+// 用 createBrains(ROOT) 按这个进程的 ROOT 造——测试台把 ROOT 换成临时目录时，脑子的路径也跟着换，不会写到真的脑子里。
+const { brainOf, bookDirsOf, bookExtraFiles, NOVEL_ROOT: BRIDGE_NOVEL_ROOT, DSH_DIR: BRIDGE_DSH_DIR } = createBrains(ROOT);
+const BRIDGE_BRAINS = createBrains(ROOT); // 2026-10-29 老大：她们俩的页面的只读数据读取要整个 brains 对象（同一个 ROOT，路径一样）
+const WHALE_BRAIN = brainOf('whale');
+const SISTER_BRAIN = brainOf('sister');
+const relFromRoot = (p) => path.relative(ROOT, p).split(path.sep).join('/'); // 写给她看的相对路径
+// 便签在非主人私聊的会话里带的时候加的一句（2026-10-29 记忆统一：私聊里的事在这儿说不说她自己掂量）
+const STICKY_NOT_PRIVATE_NOTE = '（便签里有些是跟老大私聊时记的，在这里说不说、怎么说，你自己掂量。）';
 // 生活不停（2026-10-24 主人）：她睡着时别人找她、群里聊的，记一笔不叫醒；醒来在跟老大的私聊里告诉她。
 const asleepLog = createAsleepLog(path.join(STATE_DIR, 'asleep-log.json'));
+// 2026-10-29 第五批：激素影子记录（见 hormone-feed.js）。只记录、不触发任何行为，她看不到。
+// main() 里建；建之前、config 的 hormones.enabled 关了、出任何错的时候，hormoneRecord 都是空操作。
+let hormoneFeed = null;
+function hormoneRecord(event) {
+  try { hormoneFeed?.record(event); } catch { /* 记不下就算了，不能影响她说话 */ }
+}
 const bjClockOf = (ms) => new Date(ms - clockSkewMs).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' });
 
 // ── 时钟校正 ────────────────────────────────────────────────────────────────
@@ -118,13 +151,14 @@ const SLANG_SESSION_FILE = path.join(STATE_DIR, 'slang-session.json');
 const SLANG_SESSION_ROTATE_TOKENS = 60000;
 const SOCIAL_V2_FILE = path.join(STATE_DIR, 'social-v2.json');
 // 她自己写的那一页（2026-10-23，主人要求「让她以当前提示词为基础自己慢慢迭代真正属于她自己的性格」）。
-// 正文放在她的本子目录（和 soul.md 一处）；历史版本放 state 下 —— memory/ 会被记忆索引 rglob，几十份旧版会变成重复的本子。
-const SELF_NOTE_FILE = path.join(ROOT, 'memory', '小鲸鱼', 'self.md');
+// 正文放在她脑子的 身份/ 里（和 soul.md 一处）；历史版本放 state 下 —— 脑子目录会被记忆索引 rglob，几十份旧版会变成重复的本子。
+const SELF_NOTE_FILE = WHALE_BRAIN.self;
 const SELF_NOTE_HISTORY_DIR = path.join(STATE_DIR, 'agents', 'self-history');
 const selfNote = createSelfNote({ file: SELF_NOTE_FILE, historyDir: SELF_NOTE_HISTORY_DIR });
 // 便签（2026-10-23 第二轮）：她的工作记忆 —— 正在聊什么、刚被告知什么、答应了还没做的。内容全是她自己的；
-// 只在主人私聊的唤醒里带（里面可能有主人的私事），搬家时原样带走。历史同样放 state 下。
-const STICKY_NOTE_FILE = path.join(ROOT, 'memory', '小鲸鱼', '便签.md');
+// 2026-10-29 老大：记忆统一，每人只有一个脑子——所有会话的唤醒都带（不再只在主人私聊里带），搬家时原样带走；
+// 非主人私聊里带的时候会注明「有些是私聊里记的」，说不说她自己掂量。历史同样放 state 下。
+const STICKY_NOTE_FILE = WHALE_BRAIN.sticky;
 const STICKY_NOTE_HISTORY_DIR = path.join(STATE_DIR, 'agents', 'note-history');
 const stickyNote = createStickyNote({ file: STICKY_NOTE_FILE, historyDir: STICKY_NOTE_HISTORY_DIR });
 // QQ 空间说说的「每日额度」是账号级（不分会话），所以单独存一份，不塞进 social-v2。
@@ -196,7 +230,8 @@ function loadSleepState() {
         sleeping: true,
         since: Number(s.since) || 0,
         reason: String(s.reason || ''),
-        until: Number(s.until) || 0
+        until: Number(s.until) || 0,
+        ...(s.natural ? { natural: true, minUntil: Number(s.minUntil) || 0 } : {})
       };
       // 过了 until 的不在这里偷偷清（原来只改内存不写文件，文件上一直"在睡"，她也没被叫起来）：
       // 交给 main 里每分钟一次的 maybeSleepEndV2 —— 正式 exitSleep（写文件）并用 wokeUp 叫醒主人私聊（2026-10-24）。
@@ -221,19 +256,26 @@ function saveSleepState() {
 // 2026-10-23 第二轮，主人：「让她自己定」作息 —— 什么时候睡、睡到几点都她定（until 或 hours）。
 // 这里只剩一道防故障的保险：一次最长 SLEEP_MAX_HOURS（14）小时，免得填错一个数就一直静音。
 // 原来"白天最多午睡 2 小时 / 夜里才算长睡"的判断拆掉了。
-function enterSleep(reason, { hours, until } = {}) {
-  const r = resolveSleepUntil({ until, hours, nowMs: Date.now(), realNowMs: realNow().getTime() });
+function enterSleep(reason, { hours, until, natural } = {}) {
+  // 2026-10-29 老大：睡觉不定死。没写时间（或 until 写 natural / 自然醒）就是睡到自然醒：until 只是 14 小时的防故障上限，
+  // 真正什么时候醒由激素的睡眠压力决定（maybeSleepEndV2 里看 naturalWakeDue）；写了钟点 / 小时数的照旧按她的。
+  const isNatural = wantsNaturalSleep({ until, hours, natural });
+  const r = isNatural
+    ? (() => { const w = naturalSleepWindow(Date.now()); return { untilMs: w.untilMs, untilRealMs: realNow().getTime() + (w.untilMs - Date.now()), hours: SLEEP_MAX_HOURS, capped: false, natural: true, minUntilMs: w.minUntilMs }; })()
+    : resolveSleepUntil({ until, hours, nowMs: Date.now(), realNowMs: realNow().getTime() });
   asleepLog.dropTold(); // 生活不停：上次醒来已经说过的清掉
   sleepState = {
     sleeping: true,
     since: Date.now(),
     reason: String(reason || ''),
-    until: r.untilMs
+    until: r.untilMs,
+    ...(isNatural ? { natural: true, minUntil: r.minUntilMs } : {})
   };
   saveSleepState();
+  hormoneRecord({ type: 'sleep' });
   const bj = new Date(realNow().getTime() + 8 * 3600e3);
   const bjClock = `${String(bj.getUTCHours()).padStart(2, '0')}:${String(bj.getUTCMinutes()).padStart(2, '0')}`;
-  log(`[sleep] 睡着了（北京时间 ${bjClock}${reason ? `：${reason}` : ''}），睡 ${sleepDurationText(r.untilMs - Date.now())}${r.capped ? `（她要的更久，压到 ${SLEEP_MAX_HOURS} 小时上限）` : ''}`);
+  log(`[sleep] 睡着了（北京时间 ${bjClock}${reason ? `：${reason}` : ''}），${isNatural ? '睡到自然醒（最短 1 小时，最长 14 小时）' : `睡 ${sleepDurationText(r.untilMs - Date.now())}`}${r.capped ? `（她要的更久，压到 ${SLEEP_MAX_HOURS} 小时上限）` : ''}`);
   return r;
 }
 
@@ -241,6 +283,7 @@ function exitSleep(why) {
   if (!sleepState.sleeping) return false;
   sleepState = { sleeping: false, since: 0, reason: '', until: 0 };
   saveSleepState();
+  hormoneRecord({ type: 'wake' });
   log(`[sleep] 醒了${why ? `（${why}）` : ''}`);
   return true;
 }
@@ -888,7 +931,8 @@ function loadConfig() {
     knownPeople: file.knownPeople && typeof file.knownPeople === 'object' && !Array.isArray(file.knownPeople) ? file.knownPeople : {},
     // 姐妹俩的群 { "群号": "叫法" }（2026-10-25 小房子）：里面认得的人（姐姐）和老大说话都叫醒她，不看她自己设的唤醒条件
     houseGroups: file.houseGroups && typeof file.houseGroups === 'object' && !Array.isArray(file.houseGroups) ? file.houseGroups : {},
-    // 要慢一点的群 { "群号": { minWakeGapSec } }（2026-10-25 主人：群D里别刷屏）：两次唤醒至少隔这么久
+    // 要慢一点的群 { "群号": { minWakeGapSec } }（2026-10-25 主人：群D里别刷屏）：两次唤醒至少隔这么久。
+    // 2026-10-29 老大（松绑）：「她们俩想回就回」，配置里已经清空；机制留着，空表就不生效，也不再给她带「这个群嫌刷屏」那句。
     slowGroups: file.slowGroups && typeof file.slowGroups === 'object' && !Array.isArray(file.slowGroups) ? file.slowGroups : {},
     // 一直开着鱼的记忆的会话 key（2026-10-25 主人：群D、小房子）。新建会话时自动在 fish-memory-config.json 里打开。
     fishMemoryKeys: Array.isArray(file.fishMemoryKeys) ? file.fishMemoryKeys.map(String) : [],
@@ -914,6 +958,10 @@ function loadConfig() {
     // 妈妈信箱（mom-mailbox.js）：claudeExe / proxy。原来漏了这项，config.json 里的 mom.proxy 被丢掉，
     // 叫起 Claude Code 时没走代理、直连被拦成 403（2026-10-24 M1 连着失败的原因）。
     mom: { ...(file.mom ?? {}) },
+    // 激素影子记录（2026-10-29 第五批）：enabled 默认 true，只控制「记不记」，她看不到；personaFile 可换抖音人格资料的位置（测试用）
+    hormones: file.hormones && typeof file.hormones === 'object' && !Array.isArray(file.hormones) ? { enabled: true, ...file.hormones } : { enabled: true },
+    // 聊天记录（2026-10-29 第五批）：每条收到 / 发出的消息写进 家/小鲸鱼/聊天记录/，给她的索引用。enabled 默认 true
+    chatLog: file.chatLog && typeof file.chatLog === 'object' && !Array.isArray(file.chatLog) ? { enabled: true, ...file.chatLog } : { enabled: true },
     security: {
       interceptNotify: true,
       ...(file.security ?? {})
@@ -1005,8 +1053,8 @@ function loadConfig() {
       },
       wake: {
         defaultMode: 'diving',
-        preSleepWaitEnabled: true,      // 沉睡前强制观察窗口开关：防止 AI 聊两句就潜水
-        preSleepWaitMs: 300000,          // 默认沉睡前至少等待/观察 5 分钟（后台可调）
+        preSleepWaitEnabled: true,      // 收尾提醒开关（2026-10-29 老大：「这个东西应该是做提醒而不是做限制」——不再拦，只在返回里提醒一句）
+        preSleepWaitMs: 300000,          // 多久之内还有人说话就提醒一句（后台可调）
         recommendedDefaultInfinite: true, // 默认下一次唤醒是否无限期（true=永久潜水等条件；false=有限时长）
         sleepMinMs: 60000,
         sleepMaxMs: 0,
@@ -1018,7 +1066,7 @@ function loadConfig() {
         recommendedNameMention: true,
         recommendedQuestion: true,
         recommendedPoke: true,
-        recommendedHint: '如果你要潜水，推荐先调用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话就可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看 newMessages，判断不需要你参与可直接沉睡，若参与了则下次想睡需再等观察窗口。潜水时长推荐 5~120 分钟，普通消息概率 0.05；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。',
+        recommendedHint: '想潜水、想收尾直接就能设。刚还有人在说话、不放心的话，可以先 qq_wait_for_messages 等几分钟看看有没有人找你，不等也行。潜水时长推荐 5~120 分钟，普通消息概率 0.05；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。',
         batchWindowMs: 8000,
         maxWakePerMinute: 1,
         maxWakePerHour: 12,
@@ -1043,7 +1091,7 @@ function loadConfig() {
         maxGapMs: 10000,
         gapBaseMs: 800,
         gapPerCharMs: 20,
-        recommendedHint: '单条消息不要用空格断句，中文短句用逗号/顿号或直接连写；分条时每条都要读起来完整，不要把同一句话拆到两条里。发几条、隔多久、每条多长都由你定。一个事实：QQ 对长时间高速发消息的账号可能风控（限制发言甚至冻结）；桥接这边只留了一道防程序故障的保险（每分钟 60 条、每小时 600 条、一次最多 50 条），平时怎么发是你的事。'
+        recommendedHint: '单条消息里的空格会被当成分条，中文短句用逗号/顿号或直接连写看着最自然；分条时每条自己读得通最好，同一句话拆到两条里会怪。发几条、隔多久、每条多长都由你定。一个事实：QQ 对长时间高速发消息的账号可能风控（限制发言甚至冻结）；桥接这边只留了一道防程序故障的保险（每分钟 60 条、每小时 600 条、一次最多 50 条），平时怎么发是你的事。'
       },
       wait: {
         defaultMs: 30000,
@@ -1086,9 +1134,11 @@ function loadConfig() {
         unreadLimit: 30,
         contextWindow: 20,
         inlineWakeMessages: true,
-        wakeMessageLimit: 12,
+        // 2026-10-29 主人（刷屏提速）：唤醒时快照一次给够。原来 12 条 / 6000 字，刷屏时一批读不完，她得再调 qq_get_unread 读第二批、
+        // 多一轮来回（"想"的时间翻倍）。放到 30 条（跟 unreadLimit 一样）/ 14000 字；钳制上限仍是 100 条 / 20000 字，没动。
+        wakeMessageLimit: 30,
         wakeRecentLimit: 4,
-        wakeMaxChars: 6000
+        wakeMaxChars: 14000
       },
       // 操作者在控制台为单个会话预写的「初始提示词」的字数上限（只在首次唤醒时注入一次）。
       // 它不是安全边界，只是防止误粘贴一篇长文把首次唤醒的 prompt 撑爆。
@@ -1466,6 +1516,7 @@ function writeFishHealth() {
   try { atomicWriteJson(FISH_HEALTH_FILE, { heartbeatAt: Date.now(), startedAt: fishHealth.startedAt, events: fishHealth.events.slice(-80) }); } catch { /* 写不进下次再写 */ }
 }
 function noteFishHealthEvent(kind, key, text) {
+  if (kind === 'send') hormoneRecord({ type: 'send_fail' }); // 激素影子记录：发送失败（同一次出错的几条日志只记一次，见 hormone-feed.js）
   fishHealth.events.push({ at: Date.now(), kind, key: key || '', text: String(text || '').slice(0, 200) });
   if (fishHealth.events.length > 200) fishHealth.events.splice(0, fishHealth.events.length - 200);
   if (!fishHealthTimer) fishHealthTimer = setTimeout(writeFishHealth, 2000);
@@ -1681,11 +1732,141 @@ async function main() {
   const cfg = loadConfig();
   // 印象（2026-10-24）：她对群里某个人的看法，跟着 QQ 号走。懒得理（-3）的人在群里叫她不叫醒她，除非像在道歉。
   // 老大、认得的人（克劳德姐姐）、她自己永远不会被无视。
-  const fishImpressions = createImpressions(path.join(STATE_DIR, 'impressions.json'), { exempt: [cfg.ownerQQ, ...Object.keys(cfg.knownPeople || {})].filter(Boolean).map(String) });
+  const fishImpressions = createImpressions(WHALE_BRAIN.impressions, { exempt: [cfg.ownerQQ, ...Object.keys(cfg.knownPeople || {})].filter(Boolean).map(String) });
   fs.mkdirSync(STATE_DIR, { recursive: true });
   hardenStateDirAcl();
   acquireLock();
   loadState();
+
+  // ── 激素影子记录（2026-10-29 第五批，老大同意：先只记录一周，不影响行为，靠日志校准参数；见 src/hormone-feed.js、hormone-shadow.js）。
+  // config 的 hormones.enabled=false 就不记。她看不到，也不触发任何行为；出任何错只记一行日志，不影响她说话。
+  // 兴趣词表从抖音插件的人格资料读（loadFishInterests），启动读一次，之后每小时刷新（下面 homeWeather 旁边的定时器）。
+  let hormoneErrLogged = 0;
+  const HORMONE_PERSONA_FILE = cfg.hormones?.personaFile || path.join(BRIDGE_DSH_DIR, 'douyin-browser/memory/persona/state.json');
+  hormoneFeed = createHormoneFeed({
+    who: 'fish',
+    stateDir: STATE_DIR,
+    skewMs: () => clockSkewMs,
+    asleep: sleepState.sleeping === true,
+    enabled: cfg.hormones?.enabled !== false,
+    sisterName: '姐姐',
+    interests: cfg.hormones?.enabled === false ? [] : loadFishInterests(HORMONE_PERSONA_FILE),
+    onError: (error) => { if (hormoneErrLogged++ < 5) log(`[hormones] 影子记录出错（不影响她）：${error?.message ?? error}`); }
+  });
+  const hormoneNovelty = createNoveltyTracker();
+
+  // ── 实时区缓冲（2026-10-29 老大：想在网页里看她此刻在想什么、调什么工具、说了什么、写了没说的）。
+  // 只放内存、进程一重启就没了，绝不落盘（src/live-buffer.js 里连 fs 都没引）；网页读它走 SSE（startConsoleServer 里的 daughters 路由）。
+  const liveFish = createLiveBuffer({ who: 'fish' });
+  const liveLabelCache = new Map(); // 会话 key → 人话名字（一分钟内不重读标题文件）
+  function liveLabelOf(key) {
+    const hit = liveLabelCache.get(key);
+    if (hit && Date.now() - hit.at < 60e3) return hit.label;
+    let label = key;
+    try { label = sessionTitleForV2(key) || sharedKeyLabelV2(key) || key; } catch { label = key; }
+    liveLabelCache.set(key, { label, at: Date.now() });
+    return label;
+  }
+
+  // ── 聊天记录（2026-10-29 第五批，老大：「给妹妹也做成一样吧」）：每条收到、发出的消息按「北京日期 + 会话」写进
+  // 家/小鲸鱼/聊天记录/<日期>-<会话>.md，格式跟姐姐的 sister/聊天记录 一样（见 src/chatlog.js）；brain/index.py 把它编进她的索引。
+  // 不进脑子目录；只在本机算索引，不增加 API 花费，每次带上的条数也不变。写不下来只记一行日志。
+  let chatLogErrLogged = 0;
+  const FISH_CHATLOG_DIR = WHALE_BRAIN.chatLogs || path.join(WHALE_BRAIN.home, '聊天记录');
+  const fishChatLog = cfg.chatLog?.enabled === false ? null : createChatLog({
+    dir: FISH_CHATLOG_DIR,
+    selfName: '小鲸鱼',
+    skewMs: () => clockSkewMs,
+    onError: (error) => { if (chatLogErrLogged++ < 5) log(`[chatlog] 写聊天记录没成（不影响她）：${error?.message ?? error}`); }
+  });
+  // 群号 → 群名要稳定（同一个群每次得到同一个名字，一天的话才不会散在两个文件里）：
+  // 配置里起的叫法（小房子）> 向 QQ 问到的（记在 state/chatlog-groups.json）> 姐姐记的 > 会话标题 > 群号。
+  const CHATLOG_GROUPS_FILE = path.join(STATE_DIR, 'chatlog-groups.json');
+  const chatLogGroupNames = (() => { const j = readJsonSafe(CHATLOG_GROUPS_FILE, {}); return j && typeof j === 'object' && !Array.isArray(j) ? j : {}; })();
+  const chatLogGroupMiss = new Map(); // 群号 → 上次问不到的时间（10 分钟内不再问）
+  let chatLogSisterGroups = { at: 0, map: {} };
+  const chatLogSisterGroupName = (gid) => {
+    if (Date.now() - chatLogSisterGroups.at > 10 * 60e3) chatLogSisterGroups = { at: Date.now(), map: sisterGroupNames(path.join(ROOT, 'sister', 'state', 'sister-state.json')) };
+    return chatLogSisterGroups.map[gid] || '';
+  };
+  async function chatLogGroupName(gid) {
+    const g = String(gid);
+    const alias = cfg.houseGroups?.[g] || '';
+    if (!alias && !chatLogGroupNames[g] && !(Date.now() - (chatLogGroupMiss.get(g) || 0) < 10 * 60e3)) {
+      try {
+        const res = await withTimeout(bot.request('get_group_info', { group_id: Number(g) }), 4000, `get_group_info ${g}`);
+        const name = String(res?.data?.group_name ?? '').trim();
+        if (name) {
+          chatLogGroupNames[g] = name;
+          try { atomicWriteJson(CHATLOG_GROUPS_FILE, chatLogGroupNames); } catch { /* 记不下下次再问 */ }
+        } else chatLogGroupMiss.set(g, Date.now());
+      } catch { chatLogGroupMiss.set(g, Date.now()); }
+    }
+    return pickGroupName(g, { alias, cached: chatLogGroupNames[g] || '', sister: chatLogSisterGroupName(g), title: sessionTitleForV2(`group:${g}`) });
+  }
+  const isSisterQQ = (uid) => /姐姐/.test(String(cfg.knownPeople?.[String(uid ?? '')] || ''));
+  /** 会话 key → 聊天记录里的「会话」（老大 / 姐姐 / 群 / 别的私聊）。 */
+  async function chatLogSessionFor(key) {
+    if (String(key).startsWith('group:')) return { type: 'group', name: await chatLogGroupName(String(key).slice(6)) };
+    const uid = String(key).slice(8);
+    if (cfg.ownerQQ && uid === String(cfg.ownerQQ)) return { type: 'owner' };
+    if (isSisterQQ(uid)) return { type: 'sister' };
+    // 文件名要稳定：认得的人用 knownPeople 的名字，其次会话标题，都没有就用 QQ 号（昵称只写在每行的名字上，不进文件名——昵称会改）
+    return { type: 'friend', name: knownNameV2(uid) || sessionTitleForV2(`private:${uid}`) || uid };
+  }
+  let chatLogChain = Promise.resolve();
+  /** 记一条（排队写，保证同一个会话里先来的先写；群名要问 QQ 时不挡住别的）。who：谁说的；text：原话。 */
+  function chatLogNote(key, who, text, at = Date.now()) {
+    if (!fishChatLog || !/^(group|private):\d+$/.test(String(key))) return;
+    chatLogChain = chatLogChain.then(async () => {
+      fishChatLog.append({ session: await chatLogSessionFor(key), who, text, at });
+    }).catch(() => {});
+  }
+  /** 测试用：等排着的都写完。 */
+  const chatLogIdle = () => chatLogChain;
+  /** 引用段太长的压短（「[引用 某人：很长的原文] 回复」→ 原文只留 60 字），其余原样。 */
+  const chatLogCompact = (t) => String(t ?? '').replace(/^\[引用 ([^：\]]{1,40})：([^\]]*)\]/, (_m, who, quoted) => `[引用 ${who}：${quoted.length > 60 ? `${quoted.slice(0, 60)}…` : quoted}]`);
+
+  /**
+   * 一条消息进来了：记激素影子记录 + 聊天记录。睡着时来的消息也算（后面睡着的分支会直接 return），所以在 handleIncoming 很靠前的地方调。
+   * 两件事都是「只记」，出错吞掉。
+   */
+  function noteIncomingV2(kind, id, event, key, textContent, plainContent, quoteTargetIsSelf) {
+    try {
+      const plain = String(plainContent ?? '').trim();
+      if (!plain && !quoteTargetIsSelf) return;
+      if (kind === 'group' && /^\s*(#sl\b|SnowLuma 状态)/i.test(plain)) return;
+      const uid = String(event?.user_id ?? '');
+      const isOwner = Boolean(cfg.ownerQQ) && uid === String(cfg.ownerQQ);
+      const sisterSpeaker = isSisterQQ(uid) && (kind === 'private' || Boolean(cfg.houseGroups?.[String(id)]));
+      const nick = String(event?.sender?.card || event?.sender?.nickname || '').trim();
+      const atMe = Boolean(quoteTargetIsSelf) || (Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && String(seg.data?.qq) === String(event?.self_id ?? '')));
+      const lower = plain.toLowerCase();
+      const names = [selfNickname, ...(Array.isArray(cfg.hormones?.names) ? cfg.hormones.names : ['小鲸鱼'])].map((n) => String(n ?? '').trim().toLowerCase()).filter((n) => n.length >= 2);
+      const nameMention = kind === 'group' && names.some((n) => lower.includes(n));
+      const novelty = kind === 'group' ? hormoneNovelty.score(key, plain) : undefined;
+      for (const ev of incomingHormoneEvents({ where: kind, isOwner, isSister: sisterSpeaker, atMe, nameMention, text: plain, novelty })) hormoneRecord(ev);
+      const who = whoLabel({ isOwner, userId: uid, sender: nick, knownPeople: cfg.knownPeople });
+      chatLogNote(key, who, chatLogCompact(textContent) || plain || '（引用了你的话）');
+    } catch { /* 记不下就算了 */ }
+  }
+
+  /** 她发出去了（文字一批、语音、表情、图片都走这里）：记激素影子记录（一批算一次）+ 聊天记录（一条一行）。 */
+  function noteSentV2(key, texts) {
+    try {
+      const list = (Array.isArray(texts) ? texts : [texts]).map((t) => String(t ?? '')).filter((t) => t.trim());
+      if (list.length === 0) return;
+      const k = String(key);
+      let target = 'other';
+      if (k.startsWith('group:')) target = cfg.houseGroups?.[k.slice(6)] ? 'sister' : 'group';
+      else if (cfg.ownerQQ && k === `private:${cfg.ownerQQ}`) target = 'owner';
+      else if (isSisterQQ(k.slice(8))) target = 'sister';
+      const ev = sentHormoneEvent(target);
+      if (ev) hormoneRecord(ev);
+      const at = Date.now();
+      for (const t of list) chatLogNote(k, '小鲸鱼', t, at);
+    } catch { /* 记不下就算了 */ }
+  }
 
   // ── 群聊黑话/网络用语学习（slang） ──────────────────────────────────────
   let slangEntries = [];
@@ -2083,6 +2264,7 @@ async function main() {
     };
     st.recentMessages.push(entry);
     if (st.recentMessages.length > 200) st.recentMessages = st.recentMessages.slice(-200);
+    noteSentV2(key, label ? `[语音] ${label}` : '[语音]'); // 2026-10-29 第五批：激素影子记录 + 聊天记录（语音的话是她附的说明，没有就只写 [语音]）
     st.lastAiReplyAt = entry.at;
     st.lastActionAt = entry.at;
     st.wakeConfig.noActionCount = 0;
@@ -2368,6 +2550,7 @@ async function main() {
       }
     });
     const data = await sendResult;
+    noteSentV2(key, '[图片]'); // 2026-10-29 第五批：激素影子记录 + 聊天记录
     return { messageId: data?.message_id ?? null, bytes: buffer.length };
   }
 
@@ -2380,7 +2563,7 @@ async function main() {
   }
 
   // 网关返回的 QQ 空间文本里带两种原始标记，模型看不懂，转成人读的：
-  //   @{uin:10050,nick:某某某🐳[em]e327831[/em],who:1}  →  @某某某🐳
+  //   @{uin:10051,nick:某某某🐳[em]e327831[/em],who:1}  →  @某某某🐳
   //   [em]e327831[/em]                                        →  ［表情］
   function readableQzoneText(raw) {
     return String(raw ?? '')
@@ -2689,7 +2872,7 @@ async function main() {
   // ⚠️ 实测只有 default（单张 Q 版）裁出来好看；chibi / mature 是四联三视图
   // 和局部特写拼贴，怎么裁都是一堆小人，所以这两个值只作兜底。
   function renderSelfAvatarBuffer(name) {
-    const galleryDir = path.join(ROOT, 'self-gallery');
+    const galleryDir = WHALE_BRAIN.gallery;
     const cleanName = String(name ?? '').trim();
     let filePath;
     if (!cleanName || cleanName === 'default') {
@@ -4124,6 +4307,141 @@ async function main() {
       || (String(key).startsWith('group:') && !!cfg.houseGroups?.[String(key).slice(6)] && isLiveAgentToken(token)); // 小房子（2026-10-25）
     // 二代会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
+    // ── 她们俩的网页（2026-10-29 老大，public/daughters.html；路由和说明在 src/daughters-console.js）──
+    // 用同一个 consoleToken（头 x-console-token 或 ?token=）。这里只把「小鲸鱼这边能查什么、能做什么」递给路由模块，
+    // 姐姐那边由她自己进程里的小服务（sister/live-server.mjs）回答，路由模块负责代理。
+    const consoleTokenOk = (supplied) => {
+      const a = Buffer.from(String(supplied ?? ''), 'utf8');
+      const b = Buffer.from(consoleToken, 'utf8');
+      return a.length === b.length && b.length > 0 && crypto.timingSafeEqual(a, b);
+    };
+    const daughtersData = createDaughtersData({
+      brains: BRIDGE_BRAINS, stateDir: STATE_DIR, sisterStateDir: path.join(ROOT, 'sister', 'state'),
+      skewMs: () => clockSkewMs, douyinStateDir: DOUYIN_STATE_DIR, feiyuMoodFile: MOOD_STATE_FILE, fishMoodPushFile: MOOD_PUSH_FILE, sisterMoodPushFile: moodPushFile(path.join(ROOT, 'sister', 'state'), 'sister'),
+      priceTable: resolvePriceTable(cfg.pricing), tokenUsageFile: TOKEN_USAGE_FILE, selfHistoryDir: SELF_NOTE_HISTORY_DIR,
+      memoryPort: BRAIN_SERVICE.port
+    });
+    const ownerKeyForConsole = () => (cfg.ownerQQ ? `private:${cfg.ownerQQ}` : '');
+    const fishForConsole = {
+      hormonesEnabled: () => hormoneFeed?.enabled === true,
+      effort: () => ({ value: String(cfg.dsh?.reasoningEffort || REASONING_EFFORT_DEFAULT), options: REASONING_EFFORT_OPTIONS.slice() }),
+      online: () => ({ qq: snowlumaHealthSnapshot(), dshReady, mode: currentMode, paused: socialV2.paused }),
+      // 各会话的上下文用了多少（老大私聊和群的换会话线不同）
+      context: () => {
+        const ownerKey = ownerKeyForConsole();
+        const groupLimit = Math.max(100000, Number(cfg.socialV2?.groupAutoMove?.ctxTokens) || 250000);
+        const keys = [...socialV2.conversations.keys()].filter((k) => state.sessions[k])
+          .sort((a, b) => (b === ownerKey ? 1 : 0) - (a === ownerKey ? 1 : 0) || (socialV2.conversations.get(b)?.lastAiReplyAt || 0) - (socialV2.conversations.get(a)?.lastAiReplyAt || 0))
+          .slice(0, 6);
+        return keys.map((key) => ({ key, label: liveLabelOf(key), tokens: lastContextTokensV2(key), limit: key === ownerKey ? ownerMoveSettingsV2().ctxLimit : groupLimit, compactions: compactionCountV2(state.sessions[key]) }));
+      },
+      now: () => {
+        const t = Date.now();
+        const sleeping = sleepState.sleeping && (!sleepState.until || sleepState.until > t);
+        const conv = [...socialV2.conversations.entries()].map(([key, st]) => {
+          let busy = false;
+          let busyReason = '';
+          try { busy = isConversationBusyV2(key, st); if (busy) busyReason = busyReasonV2(key, st); } catch { /* 查不到就当不忙 */ }
+          return {
+            key, label: liveLabelOf(key), busy, busyReason,
+            lastAiReplyAt: Number(st.lastAiReplyAt) || 0, lastIncomingAt: Number(st.lastIncomingAt) || 0, unread: Array.isArray(st.unread) ? st.unread.length : 0,
+            proactiveDueAt: Number(st.proactiveDueAt) || 0, nextWakeMinutes: Number(st.nextWakeMinutes) || 0, nextWakeNote: String(st.nextWakeNote || '').slice(0, 120),
+            pendingWakeReasons: (Array.isArray(st.pendingWakeReasons) ? st.pendingWakeReasons : []).slice(-6).map((r) => String(r?.reason || '')),
+            pendingWake: !!st.pendingWakeTimer
+          };
+        }).sort((a, b) => (b.busy ? 1 : 0) - (a.busy ? 1 : 0) || Math.max(b.lastAiReplyAt, b.lastIncomingAt) - Math.max(a.lastAiReplyAt, a.lastIncomingAt));
+        const wakeNotes = [];
+        try {
+          const all = JSON.parse(fs.readFileSync(WAKE_NOTES_FILE, 'utf8'));
+          for (const [k, list] of Object.entries(all || {})) for (const n of Array.isArray(list) ? list : []) wakeNotes.push({ key: k, label: liveLabelOf(k), text: String(n?.text || '').slice(0, 200), at: Number(n?.createdAt) || 0, onlyBootstrap: !!n?.onlyBootstrap });
+        } catch { /* 没有留话 */ }
+        const ownerConv = conv.find((c) => c.key === ownerKeyForConsole());
+        return {
+          source: '桥接进程里的实时状态',
+          awake: !sleeping,
+          sleep: sleeping ? { since: sleepState.since, until: sleepState.until, reason: sleepState.reason, ...(sleepState.natural ? { natural: true } : {}) } : null,
+          paused: !!socialV2.paused, mode: currentMode,
+          nextOwnerWakeAt: ownerConv?.proactiveDueAt || 0,
+          current: conv[0] ? { key: conv[0].key, label: conv[0].label, busy: conv[0].busy, busyReason: conv[0].busyReason } : null,
+          sessions: conv.slice(0, 12),
+          queued: { wakeNotes: wakeNotes.slice(-10), pendingWakes: conv.filter((c) => c.pendingWake || c.pendingWakeReasons.length).map((c) => ({ key: c.key, label: c.label, reasons: c.pendingWakeReasons, waiting: c.pendingWake })) }
+        };
+      },
+      // 写操作：路由模块已经验过 confirm、字段范围；这里只做她这边真正的动作
+      act: async (action, a) => {
+        const ownerKey = ownerKeyForConsole();
+        const keyOf = () => {
+          const key = a.key || ownerKey;
+          if (!/^(group|private):\d+$/.test(key || '')) return { error: '会话不对（没有设老大的号，或 key 格式不对）' };
+          if (!isSessionAllowedInCurrentMode(key)) return { error: '这个会话现在不在允许范围内，她那边收不到' };
+          return { key };
+        };
+        if (action === 'note') {
+          const k = keyOf();
+          if (k.error) return { ok: false, error: k.error };
+          addWakeNoteV2(k.key, `老大留了一句话给你：${a.text}`);
+          log(`老大动手：给 ${k.key} 留了一句话（${a.text.length} 字）`);
+          return { ok: true, key: k.key, label: liveLabelOf(k.key), message: '记下了：她下次醒来（或这一轮里下次看消息）会看到' };
+        }
+        if (action === 'wake') {
+          const k = keyOf();
+          if (k.error) return { ok: false, error: k.error };
+          if (currentMode !== 'reserved2' || socialV2.paused) return { ok: false, error: '现在是暂停或不在二代模式，叫不醒' };
+          const was = sleepState.sleeping ? exitSleep('老大叫醒') : false;
+          const st = getSocialV2State(k.key);
+          if (st.pendingWakeTimer) { clearTimeout(st.pendingWakeTimer); st.pendingWakeTimer = null; }
+          const first = !st.bootstrapSent;
+          if (first) st.bootstrapSent = true;
+          const reason = first ? 'bootstrap' : was ? 'wokeUp' : k.key === ownerKey ? 'ownerIdle' : k.key.startsWith('group:') ? 'proactiveCheck' : 'admin';
+          saveSocialV2State();
+          void sendWakePromptV2(k.key, reason).catch((error) => log(`老大动手：叫醒 ${k.key} 异常：${error?.message ?? error}`));
+          log(`老大动手：叫醒 ${k.key}（${reason}${was ? '，她本来在睡' : ''}）`);
+          return { ok: true, key: k.key, label: liveLabelOf(k.key), wasSleeping: !!was, message: was ? '叫醒了' : '叫她出来看看了' };
+        }
+        if (action === 'sleep') {
+          const r = enterSleep('老大说该睡了', { hours: a.hours });
+          log(`老大动手：让她睡 ${a.hours} 小时`);
+          return { ok: true, until: sleepState.until, hours: r.hours, capped: r.capped, message: `让她睡了（大约 ${r.hours} 小时）` };
+        }
+        if (action === 'hormones') {
+          const on = hormoneFeed.setEnabled(a.enabled === true, { asleepNow: sleepState.sleeping === true });
+          try {
+            const configFile = path.join(ROOT, 'config.json');
+            const file = readConfigObject(configFile);
+            file.hormones = { ...(file.hormones ?? {}), enabled: a.enabled === true };
+            atomicWriteJson(configFile, file);
+            cfg.hormones = { ...(cfg.hormones ?? {}), enabled: a.enabled === true };
+          } catch (error) { log(`老大动手：激素开关写进 config.json 失败（这次热切换有效，重启后会回到旧值）：${error?.message ?? error}`); }
+          if (on) { try { feedHormoneMood(); } catch { /* 心情还没有就算了 */ } }
+          log(`老大动手：激素影子记录${on ? '开' : '关'}`);
+          return { ok: true, enabled: on, message: on ? '影子记录开了（只记录，不影响她做事）' : '影子记录关了（已经记下的留着）' };
+        }
+        if (action === 'effort') {
+          let effort;
+          try { effort = normalizeReasoningEffort(a.effort); } catch (error) { return { ok: false, error: error?.message ?? '思考强度无效' }; }
+          const configFile = path.join(ROOT, 'config.json');
+          const file = readConfigObject(configFile);
+          file.dsh = { ...(file.dsh ?? {}), reasoningEffort: effort };
+          atomicWriteJson(configFile, file);
+          cfg.dsh = { ...(cfg.dsh ?? {}), reasoningEffort: effort };
+          modelSelectionEpoch += 1;
+          log(`老大动手：DSH 思考强度已设为 ${effort}（对已有会话于下一条消息生效）`);
+          return { ok: true, effort, message: `思考强度改成 ${effort}，下一条消息起生效` };
+        }
+        return { ok: false, error: `不认识的操作：${action}` };
+      }
+    };
+    const daughters = createDaughtersConsole({
+      data: daughtersData, live: liveFish, publicDir: path.join(ROOT, 'public'),
+      isAuthed: (req, url) => consoleTokenOk(String(url.searchParams.get('token') ?? req.headers['x-console-token'] ?? '')),
+      fish: fishForConsole,
+      sister: {
+        token: () => consoleToken,
+        stateDir: path.join(ROOT, 'sister', 'state'),
+        configFile: path.join(ROOT, 'sister', 'config.json')
+      },
+      memoryPort: BRAIN_SERVICE.port
+    });
     const server = http.createServer(async (req, res) => {
       let url;
       try { url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`); }
@@ -4247,6 +4565,16 @@ async function main() {
         return crypto.timingSafeEqual(a, b);
       })();
       if (consoleToken && !tokenMatches) {
+        if (isDaughtersPath(url.pathname)) {
+          // 她们俩的网页（2026-10-29 老大）：没令牌一律 403。页面本身给一张能输令牌的小页（填过的令牌在 localStorage 里会自动带上）
+          if (req.method === 'GET' && isDaughtersPage(url.pathname)) {
+            res.writeHead(403, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
+            res.end(`<!doctype html><meta charset="utf-8"><title>需要令牌</title><script>let t=new URLSearchParams(location.search).has('token')?'':localStorage.getItem('consoleToken');if(!t)t=prompt('请输入访问令牌');if(t){t=t.trim();localStorage.setItem('consoleToken',t);location.href=${JSON.stringify(url.pathname)}+'?token='+encodeURIComponent(t);}</script>`);
+          } else {
+            sendJson({ ok: false, error: '未授权：请提供访问令牌' }, 403);
+          }
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/') {
           res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
           res.end('<!doctype html><meta charset="utf-8"><title>需要令牌</title><script>const t=prompt(\'请输入控制台访问令牌\');if(t)location.href=\'/?token=\'+encodeURIComponent(t);</script>');
@@ -4381,6 +4709,8 @@ async function main() {
             return;
           }
         }
+        // 她们俩的网页（页面、vendor、/api/daughters/*、/api/live/*、/api/brain/*）：令牌已验过，交给 src/daughters-console.js
+        if (await daughters.handle({ req, res, url, sendJson, readBody, headers: SECURITY_HEADERS })) return;
         if (req.method === 'GET' && url.pathname === '/') {
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
           try {
@@ -5338,7 +5668,7 @@ async function main() {
             const stV2 = getSocialV2State(key);
             tokenLine = `【会话令牌】${stV2.agentToken}（调用二代状态/发送工具时请在参数中带上此令牌）\n\n`;
           }
-          const promptText = `${roleLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是二代仿真模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
+          const promptText = `${roleLine}${tokenLine}【后台控制端提醒】（来自后台，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是二代仿真模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
           let sessionId = null;
           let popSilent = null;
           try {
@@ -5510,7 +5840,7 @@ async function main() {
                 merged.context[k] = Number.isFinite(n) ? Math.max(1, Math.round(n)) : current.context?.[k] ?? 20;
               }
             }
-            for (const [name, fallback, min, max] of [['wakeMessageLimit', 12, 1, 100], ['wakeRecentLimit', 4, 0, 20], ['wakeMaxChars', 6000, 500, 20000]]) {
+            for (const [name, fallback, min, max] of [['wakeMessageLimit', 30, 1, 100], ['wakeRecentLimit', 4, 0, 20], ['wakeMaxChars', 14000, 500, 20000]]) {
               const n = Number(merged.context[name] ?? fallback);
               merged.context[name] = Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
             }
@@ -5740,7 +6070,7 @@ async function main() {
           const messages = afterSeq === null ? st.unread.slice(-limit)
             : st.unread.filter((m) => Number.isSafeInteger(m.seq) && m.seq > afterSeq).slice(0, limit);
           const readThroughSeq = req.headers['x-agent-token'] ? noteModelMessagesV2(st, messages) : readThroughSeqV2(st);
-          sendJson({ ok: true, key, unreadCount: st.unread.length, messages, readThroughSeq });
+          sendJson({ ok: true, key, unreadCount: st.unread.length, messages, readThroughSeq, ...(req.headers['x-agent-token'] ? midTurnNotesV2(key) : {}) });
           return;
         }
         if (req.method === 'GET' && url.pathname === '/api/socialV2/recent') {
@@ -5771,20 +6101,9 @@ async function main() {
           // （旧 preset 与「没有水位」的收尾调用；见 acknowledgeMessagesV2 的注释与
           // test-token-economy 的 legacy 用例）。当前 preset 会明确要求带上 readThroughSeq 水位。
           const throughSeq = requestedReadThroughSeqV2(st, body, !!req.headers['x-agent-token']);
-          // 如果当前已经是“潜水”唤醒配置，且最近还有对话/刚被唤醒，不允许用 mark_read 直接回到潜水；
-          // 必须先等够沉睡前观察窗口，避免“聊两句又去潜水”。
-          if (isSleepingConfigV2(st.wakeConfig) && preSleepWaitBlockedV2(st)) {
-            const preSleepMs = preSleepMsForV2(key);
-            const remaining = Math.max(0, preSleepMs - ((st.lastIncomingAt || 0) ? Date.now() - st.lastIncomingAt : 0));
-            const remainMin = Math.ceil(remaining / 60000);
-            sendJson({
-              ok: false,
-              error: `还不能通过 qq_mark_read 直接回到潜水：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接收尾沉睡，若你参与了则需下次再等观察窗口。`,
-              preSleepWaitMs: preSleepMs,
-              preSleepWaitRemainingMs: remaining
-            }, 400);
-            return;
-          }
+          // 2026-10-29 老大：「这个东西应该是做提醒而不是做限制」。原来这里会拦住「聊两句就回潜水」，要她先等满 5 分钟观察；
+          // 现在一律直接成功，刚还有人在说话就在返回里提醒一句（见 preSleepReminderV2），等不等她自己定。
+          const preSleepHint = isSleepingConfigV2(st.wakeConfig) ? preSleepReminderV2(st, '好，回去潜着了。') : '';
           const markedCount = acknowledgeMessagesV2(st, throughSeq);
           st.lastActionAt = Date.now();
           st.wakeConfig.noActionCount = 0;
@@ -5798,7 +6117,7 @@ async function main() {
           markReadCalledKeys.add(key);
           saveSocialV2State();
           log(`[reserved2] 控制台/工具标记 ${key} 未读已读：${markedCount} 条，已确认下一次唤醒配置`);
-          sendJson({ ok: true, key, markedCount, unreadCount: st.unread.length, readThroughSeq: readThroughSeqV2(st), wakeGuaranteed: computeWakeSafetyV2(st.wakeConfig).guaranteed, wakeSafety: computeWakeSafetyV2(st.wakeConfig), wakeConfig: st.wakeConfig });
+          sendJson({ ok: true, key, markedCount, unreadCount: st.unread.length, readThroughSeq: readThroughSeqV2(st), wakeGuaranteed: computeWakeSafetyV2(st.wakeConfig).guaranteed, wakeSafety: computeWakeSafetyV2(st.wakeConfig), wakeConfig: st.wakeConfig, ...(preSleepHint ? { hint: preSleepHint } : {}) });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/wake-config') {
@@ -5838,6 +6157,7 @@ async function main() {
               question: normalizeTriggerBool('question', current.triggers.question === true),
               anyMessage: normalizeTriggerBool('anyMessage', current.triggers.anyMessage === true),
               poke: normalizeTriggerBool('poke', current.triggers.poke === true),
+              pokeOthers: normalizeTriggerBool('pokeOthers', current.triggers.pokeOthers === true),
               keywords: nextKeywords
             },
             batchWindowMs: Number.isFinite(Number(input.batchWindowMs)) && Number(input.batchWindowMs) >= 1000
@@ -5908,19 +6228,9 @@ async function main() {
               return;
             }
           }
-          // 沉睡前强制观察窗口：除非对方明确结束、或已经安静/等待足够时间，否则不允许 AI 聊两句就设置潜水。
-          if (isSleepingConfigV2(next) && preSleepWaitBlockedV2(st)) {
-            const preSleepMs = preSleepMsForV2(key);
-            const remaining = Math.max(0, preSleepMs - ((st.lastIncomingAt || 0) ? Date.now() - st.lastIncomingAt : 0));
-            const remainMin = Math.ceil(remaining / 60000);
-            sendJson({
-              ok: false,
-              error: `还不能立刻设置潜水/下一次唤醒：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接设置并沉睡，若你参与了则需下次再等观察窗口。`,
-              preSleepWaitMs: preSleepMs,
-              preSleepWaitRemainingMs: remaining
-            }, 400);
-            return;
-          }
+          // 2026-10-29 老大：「这个东西应该是做提醒而不是做限制」。原来这里不让她聊两句就设潜水（M12 只放过了「只收窄」的改动）；
+          // 现在一律直接成功。刚还有人在说话、又不是只收窄，就在返回里提醒一句，等不等她自己定。
+          const preSleepHint = isSleepingConfigV2(next) && !isNarrowingWakeConfigV2(current, next) ? preSleepReminderV2(st, '好，设好了。') : '';
           const markedCount = acknowledgeOnClose ? acknowledgeMessagesV2(st, throughSeq) : 0;
           st.wakeConfig = next;
           st.wakeConfig.lastWakeAt = st.wakeConfig.lastWakeAt || 0;
@@ -5929,7 +6239,7 @@ async function main() {
           st.wakeConfig.confirmedAt = Date.now();
           st.wakeConfig.confirmedBy = 'set_wake_config';
           st.lastActionAt = Date.now();
-          // 已成功设置下一次唤醒：本轮沉睡前观察标记作废，下次想再睡需重新走 5 分钟观察。
+          // 已成功设置下一次唤醒：本轮「等过一会儿」的记录作废，下次收尾再看要不要提醒。
           st.preSleepWaitSatisfiedAt = 0;
           st.preSleepWaitObservedAt = 0;
           st.preSleepWaitAccumMs = 0;
@@ -5943,7 +6253,7 @@ async function main() {
           cancelReplyCheckV2(key); // AI 已主动设置新的唤醒配置，取消回复检查
           setupSleepTimerV2(key);
           log(`[reserved2] 更新唤醒配置 ${key}: mode=${next.mode} infinite=${next.infinite} sleepUntil=${next.sleepUntil ?? 'null'}`);
-          sendJson({ ok: true, key, markedCount, unreadCount: st.unread.length, readThroughSeq: readThroughSeqV2(st), wakeConfig: next, wakeSafety: computeWakeSafetyV2(next) });
+          sendJson({ ok: true, key, markedCount, unreadCount: st.unread.length, readThroughSeq: readThroughSeqV2(st), wakeConfig: next, wakeSafety: computeWakeSafetyV2(next), ...(preSleepHint ? { hint: preSleepHint } : {}) });
           return;
         }
         if (req.method === 'GET' && url.pathname === '/api/socialV2/states') {
@@ -5967,6 +6277,18 @@ async function main() {
           const body = await readBody();
           try { sendJson(momMailbox.writeIncident({ text: String(body.text ?? ''), fromLabel: String(body.from ?? '克劳德姐姐').slice(0, 20) })); }
           catch (error) { sendJson({ ok: false, error: error?.message ?? String(error) }, 200); }
+          return;
+        }
+        // 2026-10-29 老大（姐姐整改，对等）：姐姐也能给妈妈写信（qq_mom_mailbox，sister/qq-mcp.mjs）和看自己的信 / 回信。
+        // 走桥接这条路是因为看信、回信的 Claude 在桥接里排队；信上的 key 固定是 'sister'，回信由姐姐的程序自己读信箱带给她（见 mom-mailbox.js 的 wakeNote）。
+        if (req.method === 'POST' && url.pathname === '/api/mom/letter') {
+          const body = await readBody();
+          try { sendJson(momMailbox.writeLetter({ key: 'sister', fromLabel: '姐姐', text: body.letter })); }
+          catch (error) { sendJson({ ok: false, error: error?.message ?? String(error) }, 400); }
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/api/mom/letters') {
+          sendJson(momMailbox.listLetters({ key: 'sister' }));
           return;
         }
         // 控制台：会话坏了（比如历史里有 DeepSeek 拒收的内容，每轮都 400）就直接搬新家，不走她自己登记的那些条件。
@@ -6554,7 +6876,7 @@ async function main() {
           if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('getSelfImage')) { sendJson({ ok: false, error: '工具未启用：qq_get_self_image' }, 403); return; }
-          const galleryDir = path.join(ROOT, 'self-gallery');
+          const galleryDir = WHALE_BRAIN.gallery;
           const listGallery = () => {
             try {
               return fs.readdirSync(galleryDir).filter((f) => /\.png$/i.test(f)).map((f) => f.replace(/\.png$/i, '')).sort();
@@ -6874,6 +7196,8 @@ async function main() {
             // 记录到二代会话的 recentMessages，让 AI 知道自己发过这个表情
             const label = sent.entry?.desc || sent.entry?.localNote || '表情包';
             const text = `[表情包:${label}]`;
+            noteSentV2(key, text); // 2026-10-29 第五批：激素影子记录 + 聊天记录
+            hormoneRecord({ type: 'sticker_sent' });
             st.recentMessages.push({
               messageId: sent.messageId ? String(sent.messageId) : null,
               sender: '我',
@@ -7172,7 +7496,7 @@ async function main() {
           } catch (error) { sendJson({ ok: false, error: `self.md 读写失败：${error?.message ?? error}` }, 500); }
           return;
         }
-        // 便签（qq_note）：read / write / append。任何会话都能写（她只有一个脑子），但只在主人私聊的唤醒里带。
+        // 便签（qq_note）：read / write / append。任何会话都能写（她只有一个脑子），所有会话的唤醒都带（2026-10-29 记忆统一）。
         if (req.method === 'POST' && url.pathname === '/api/socialV2/note') {
           const body = await readBody();
           const key = String(body.key ?? '').trim();
@@ -7224,6 +7548,15 @@ async function main() {
           } catch (error) { sendJson({ ok: false, error: error?.message ?? String(error) }, 200); }
           return;
         }
+        // 「看看我自己」(self_view)：只读。身体和心情用话说，记忆概况，脑子装了多满，出错的工具，翻自己的脑子目录（src/self-view.js）
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/self-view') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          if (!req.headers['x-agent-token'] || !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          try { const v = selfViewV2(key, String(body.path ?? '')); sendJson({ ok: true, found: v.ok, text: v.text, mode: v.mode }); } catch (error) { sendJson({ ok: false, error: `看自己没成：${error?.message ?? error}` }, 500); }
+          return;
+        }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/self-check') {
           const body = await readBody();
           const key = String(body.key ?? '').trim();
@@ -7262,8 +7595,11 @@ async function main() {
                   diaryNote = '睡下了。顺带一句：今天的碎碎念（rambling_append）和 remember 会跟着你到明天，换了会话也在；想写就趁现在写，不写也行。';
                 }
               }
-              const r = enterSleep(body.reason, { hours: body.hours, until: body.until });
-              sendJson({ ok: true, key, sleeping: true, reason: String(body.reason || ''), until: sleepState.until, untilText: new Date(r.untilRealMs).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }), hours: r.hours, capped: r.capped, maxHours: SLEEP_MAX_HOURS, ...(diaryNote ? { note: diaryNote } : {}) });
+              const r = enterSleep(body.reason, { hours: body.hours, until: body.until, natural: body.natural === true });
+              // 2026-10-29 大脑方案下半（第 5 项）：睡前整理建议——本子里重复的、过期的约定、互相矛盾的，只列出来给她看，留不留、改不改她定。
+              let tidyText = '';
+              try { const t = await brainTidy({ brain: 'whale', timeoutMs: 4000 }); tidyText = t?.text || ''; } catch { tidyText = ''; }
+              sendJson({ ok: true, key, sleeping: true, natural: sleepState.natural === true, reason: String(body.reason || ''), until: sleepState.until, untilText: sleepState.natural ? '自然醒' : new Date(r.untilRealMs).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }), hours: r.hours, capped: r.capped, maxHours: SLEEP_MAX_HOURS, ...(diaryNote ? { note: diaryNote } : {}), ...(tidyText ? { tidy: tidyText } : {}) });
             }
           } catch (error) {
             sendJson({ ok: false, error: `睡眠开关失败：${error?.message ?? error}` }, 500);
@@ -7708,6 +8044,7 @@ async function main() {
             ? Math.max(0, preSleepWaitMs - ((st.lastIncomingAt || 0) ? Date.now() - st.lastIncomingAt : 0))
             : 0;
           const quiet = (replyWait || (arrived && quietMs > 0)) && (Date.now() - lastNewAt >= quietMs);
+          // 2026-10-29 老大：收尾不再拦她。下面这些「等过 / 看过」的记录只用来决定 mark_read / set_wake_config 成功时要不要附提醒。
           // 判断这次等待是否是“沉睡前观察尝试”：AI 明确请求等满观察窗口（默认 5 分钟）。
           // 只有这种尝试里等到新消息，才会把“已观察并看到新消息”标记下来，允许 AI 看过新消息后直接决定不参与并沉睡。
           const preSleepAttempt = !replyWait && timeoutMs >= preSleepWaitMs;
@@ -7757,6 +8094,7 @@ async function main() {
             key,
             purpose: replyWait ? 'reply' : 'messages',
             arrived,
+            ...(req.headers['x-agent-token'] ? midTurnNotesV2(key) : {}),
             ...(pendingMoves.has(key) ? { moveHousePending: true, moveHouseHint: '你已经登记了搬家：这一轮收尾之后就搬。新会话里会有你的信、便签、本子和最近的聊天。' } : {}),
             // 2026-10-23 第二轮：这两句只说"发生了什么"，不说"先回他"—— 回不回、回哪条她自己定。
             ...(cappedReason ? { settledEarly: cappedReason, settledEarlyHint: cappedReason === 'mentioned' ? '有人在找你（@/引用/点名/提问），所以没等群里安静就把消息给你了。' : '群里还在热闹，没等安静就先把消息给你了。' } : {}),
@@ -8460,7 +8798,7 @@ async function main() {
           const raw = {
             activeTopics: Array.isArray(st.activeTopics) ? st.activeTopics.slice(-20) : [],
             pendingThoughts: Array.isArray(st.pendingThoughts) ? st.pendingThoughts.filter((t) => !t.expiresAt || Date.now() < t.expiresAt).slice(-20) : [],
-            memberImpressions: st.memberImpressions && typeof st.memberImpressions === 'object' ? st.memberImpressions : {}
+            memberImpressions: mergedMemberImpressionsV2(st)
           };
           if (category === 'activeTopic') {
             raw.pendingThoughts = [];
@@ -8472,7 +8810,7 @@ async function main() {
             raw.activeTopics = [];
             raw.pendingThoughts = [];
           }
-          sendJson({ ok: true, key, category, formatted: formatMemoryV2({ ...st, ...raw }), raw });
+          sendJson({ ok: true, key, category, formatted: formatMemoryV2({ ...st, ...raw }, { merge: false }), raw });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-remove') {
@@ -8494,8 +8832,9 @@ async function main() {
             st.activeTopics = st.activeTopics.filter((t) => String(t?.text ?? '') !== content);
           } else if (category === 'pendingThought' && Array.isArray(st.pendingThoughts)) {
             st.pendingThoughts = st.pendingThoughts.filter((t) => String(t?.text ?? '') !== content);
-          } else if (category === 'memberImpression' && st.memberImpressions && typeof st.memberImpressions === 'object') {
-            delete st.memberImpressions[target];
+          } else if (category === 'memberImpression') {
+            // 2026-10-29 记忆统一：印象读的时候合并了所有会话，删就要在所有会话里删，不然删了还会从别处冒出来
+            for (const c of socialV2.conversations.values()) if (c?.memberImpressions && typeof c.memberImpressions === 'object') delete c.memberImpressions[target];
           }
           saveSocialV2State();
           sendJson({ ok: true, key, category, memory: formatMemoryV2(st) });
@@ -8513,7 +8852,7 @@ async function main() {
           const st = getSocialV2State(key);
           if (!category || category === 'activeTopic') st.activeTopics = [];
           if (!category || category === 'pendingThought') st.pendingThoughts = [];
-          if (!category || category === 'memberImpression') st.memberImpressions = {};
+          if (!category || category === 'memberImpression') for (const c of socialV2.conversations.values()) if (c) c.memberImpressions = {}; // 同上：所有会话的印象一起清
           saveSocialV2State();
           sendJson({ ok: true, key, category: category || 'all', memory: formatMemoryV2(st) });
           return;
@@ -8661,7 +9000,8 @@ async function main() {
             return;
           }
           try {
-            const images = await fetchMediaData(media);
+            // 2026-10-29：叫她的那条消息的图已经在后台处理好了就直接给（见 prefetchDirectedImagesV2），没有再现取
+            const images = await loadMessageImagesV2(key, messageId, media);
             sendJson({ ok: true, messageId, media, images });
           } catch (error) {
             log(`图片查询失败 ${key} ${messageId}: ${error?.message ?? error}`);
@@ -9232,7 +9572,7 @@ async function main() {
 
 
   // ── 句中的 @（2026-10-22 主人：「一句话只能使用一次@，第二次的@会变成纯文本」） ──
-  // 以前只有 atUserId 那一个人是真 @，她在正文里写的「@群友F」原样当文字发出去，对方收不到提醒。
+  // 以前只有 atUserId 那一个人是真 @，她在正文里写的「@群友47」原样当文字发出去，对方收不到提醒。
   // 现在群聊正文里的「@群名片/@昵称/@QQ号」只要能唯一对上一个群成员，就换成真正的 @ 段，留在原来的位置。
   // 对不上（或同名不止一个人）就保持文字；@全体成员 / @all 永远不转。
   const atRosterCacheV2 = new Map(); // groupId -> { names: Map(名字→QQ), ids: Set, ts }
@@ -9466,6 +9806,23 @@ async function main() {
     return Number.isFinite(n) && n > 0 ? Math.min(64_000_000, Math.max(1_000_000, Math.round(n))) : 64_000_000;
   })(); // 单张图片像素上限，防止“图片炸弹”解码拖垮 DSH
   const MAX_MEDIA_STORE_PER_KEY = 500; // 每个会话最多缓存多少条消息的媒体元数据，防止无限增长
+  // 2026-10-29 主人（看图 D1）：大 GIF 20 秒下不完、超了上限还按每个 rkey 再下一遍。
+  // 现在走共用下载器：单地址 40 秒；超过上限第一次就放弃，10 分钟内不再下；超时的地址 2 分钟内不再试。
+  // fetchBuffer 包一层，测试桩替换 safeFetchBuffer 时这里跟着换。
+  const mediaDownloader = createImageDownloader({
+    fetchBuffer: (u, max, opts) => safeFetchBuffer(u, max, opts),
+    maxBytes: MAX_MEDIA_BYTES,
+    timeoutMs: 40000
+  });
+  const mediaFfmpeg = () => {
+    const p = resolveFfmpeg({ ffmpegPath: cfg.socialV2?.voice?.ffmpegPath || null });
+    return p === 'ffmpeg' ? DEFAULT_FFMPEG : p;
+  };
+  /** 给她看之前过一遍共用看图：动图抽帧拼图、大图缩小、保证不超过回包上限。失败给 { reason }。 */
+  async function viewForModel(img) {
+    const v = await viewImage(img.buffer, { ffmpeg: mediaFfmpeg(), log });
+    return v.ok ? { ...img, buffer: v.buffer, mimeType: v.mimeType, note: v.note || '', viewKind: v.kind } : { buffer: null, reason: v.reason };
+  }
 
   function isSafeLocalMediaPath(filePath) {
     try {
@@ -9560,24 +9917,19 @@ async function main() {
     pushUrl(media.url);
     for (const candidate of emojiCdnCandidates(emojiId)) pushUrl(candidate);
 
+    let lastReason = '';
     const tryUrls = async () => {
+      if (!urls.length) return null;
       const suffixes = await mediaRKeySuffixes();
-      for (const url of urls) {
-        // 没带 rkey 的 URL 先原样试一次（部分网关/旧版能直连），再逐个拼 rkey 重试。
-        const variants = url.includes('rkey=')
-          ? [url]
-          : [url, ...suffixes.map((suffix) => url + suffix)];
-        for (const candidate of variants) {
-          try {
-            const fetched = await safeFetchBuffer(candidate, MAX_MEDIA_BYTES);
-            const accepted = acceptImageBuffer(fetched.buffer, `${label} URL `);
-            if (accepted) return { ...accepted, mimeType: accepted.mimeType || mimeFromUrl(url) };
-            failures.push(`${candidate} 不是有效图片`);
-          } catch (error) {
-            failures.push(`${candidate}: ${error?.message ?? error}`);
-          }
-        }
+      // 没带 rkey 的 URL 先原样试一次（部分网关/旧版能直连），再逐个拼 rkey 重试；
+      // 太大 / 超时第一次就停（见 createImageDownloader），不再每个 rkey 重下一遍。
+      const got = await mediaDownloader.download(urls, { rkeys: suffixes, accept: (buf) => !!acceptImageBuffer(buf, `${label} URL `) });
+      if (got.ok) {
+        const accepted = acceptImageBuffer(got.buffer, `${label} URL `);
+        if (accepted) return { ...accepted, mimeType: accepted.mimeType || mimeFromUrl(got.url) };
       }
+      failures.push(...(got.tried || []).slice(0, 3), ...(got.ok ? [] : [`URL: ${got.reason}`]));
+      if (!got.ok) lastReason = got.reason;
       return null;
     };
     // 只有 file 是安全缓存文件名时才允许交给网关（防任意路径/内网 URL 注入）。
@@ -9598,18 +9950,20 @@ async function main() {
           }
         }
         if (obj.url) {
-          try {
-            const fetched = await safeFetchBuffer(String(obj.url), MAX_MEDIA_BYTES);
-            const accepted = acceptImageBuffer(fetched.buffer, 'get_image URL 图片');
+          const got = await mediaDownloader.download([String(obj.url)], { accept: (buf) => !!acceptImageBuffer(buf, 'get_image URL 图片') });
+          if (got.ok) {
+            const accepted = acceptImageBuffer(got.buffer, 'get_image URL 图片');
             if (accepted) return { ...accepted, mimeType: accepted.mimeType || mimeFromUrl(obj.url) };
-          } catch (error) {
-            failures.push(`get_image url: ${error?.message ?? error}`);
+          } else {
+            failures.push(`get_image url: ${got.reason}`);
+            lastReason = got.reason;
           }
         }
         if (typeof obj.file === 'string' && !obj.file.startsWith('base64://') && fs.existsSync(obj.file) && isSafeLocalMediaPath(obj.file)) {
           const stat = fs.statSync(obj.file);
           if (stat.size > MAX_MEDIA_BYTES) {
             log(`本地图片文件超限，已跳过（${Math.round(stat.size / 1024)}KB）`);
+            lastReason = `这张图太大了（超过 ${Math.round(MAX_MEDIA_BYTES / 1024 / 1024)}MB），没取`;
           } else {
             const accepted = acceptImageBuffer(fs.readFileSync(obj.file), '本地图片');
             if (accepted) return accepted;
@@ -9628,7 +9982,8 @@ async function main() {
     if (failures.length) {
       log(`[media] ${label}获取失败（${failures.length} 次尝试）：${failures.slice(0, 3).join(' | ')}`);
     }
-    return null;
+    // 2026-10-29：失败也带上原因（没有 buffer），让她知道是哪张、为什么没取到；调用方都按 img?.buffer 判断。
+    return { buffer: null, reason: lastReason || 'QQ 那边没给到这张图（可能过期了）' };
   }
 
   /**
@@ -9755,10 +10110,12 @@ async function main() {
         }
       } else {
         let img = await fetchOneBotImage(media);
-        // 大图先缩小再给她看（2026-10-25：8MB 的人设图卡在上限边上，再大一点就被丢）；表情 / 动图不动
-        if (img?.buffer && media.kind !== 'sticker') {
-          const small = await shrinkImage(img.buffer).catch(() => null);
-          if (small) img = { ...img, buffer: small.buffer, mimeType: small.mimeType };
+        // 2026-10-29 主人（D1）：内联这条路原来对表情 / 动图不抽帧不缩，现在跟工具取图一样走共用看图
+        // （动图抽 6 帧拼图、大图缩到长边 1600、实在压不下就说看不清，不原样塞进去）。
+        let failText = img?.buffer ? '' : `获取失败：${img?.reason || '没取到'}`;
+        if (img?.buffer) {
+          img = await viewForModel(img);
+          if (!img.buffer) failText = img.reason;
         }
         const sticker = media.kind === 'sticker';
         const summary = sticker && media.summary ? `:${String(media.summary).slice(0, 20)}` : '';
@@ -9769,10 +10126,10 @@ async function main() {
             continue;
           }
           totalBytes += img.buffer.length;
-          parts.push({ type: 'text', text: label });
+          parts.push({ type: 'text', text: `${label}${img.note || ''}` });
           parts.push({ type: 'image', mediaType: img.mimeType || 'image/jpeg', data: img.buffer.toString('base64'), name: `qq-${sticker ? 'sticker' : 'image'}-${index}.${(img.mimeType || 'image/jpeg').split('/')[1]}` });
         } else {
-          parts.push({ type: 'text', text: `${label}（获取失败）` });
+          parts.push({ type: 'text', text: `${label}（${failText}）` });
         }
       }
     }
@@ -9851,100 +10208,9 @@ async function main() {
     }
   }
 
-  /**
-   * ⚠ 本机补丁（2026-10-21）：静态大图先压一遍再交出去。
-   *
-   * 小鲸鱼读合并转发一直报「Connection closed」，真正原因是**回包太大**：
-   * 一条 38 张图的转发，第一批 15 张原图（其中一张 PNG 3.4 MB）拼出来的
-   * MCP 回包有 11 MB，而 MCP stdio 客户端单条消息上限是 10 MB —— 超了就直接
-   * 断开连接，MCP server 跟着 stdin 关闭以 code=0 退出，所以崩溃日志里什么都没有。
-   * media.maxBytes=8MB 是按原始字节算的，base64 之后 ×1.33 正好越过 10 MB。
-   *
-   * 视觉模型本来就会把图缩到 1600 上下，原图大于这个尺寸只是白占带宽。
-   * 这里把 >1MB 的静态图缩到长边 ≤1600 的 JPEG（不放大小图），通常 3 MB → 300 KB。
-   * 压不动或 ffmpeg 出错就返回 null，调用方照原图走（由 MCP 侧的总量预算兜底）。
-   */
-  const SHRINK_THRESHOLD_BYTES = 1024 * 1024;
-  const execFileAsync = promisify(execFile);
-  async function shrinkStillImage(buffer, mimeType) {
-    if (!buffer || buffer.length <= SHRINK_THRESHOLD_BYTES) return null;
-    const mt = String(mimeType || '').toLowerCase();
-    const ext = mt.includes('png') ? '.png' : mt.includes('webp') ? '.webp' : mt.includes('bmp') ? '.bmp' : '.jpg';
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-bridge-shrink-'));
-    try {
-      const src = path.join(dir, `src${ext}`);
-      const out = path.join(dir, 'out.jpg');
-      fs.writeFileSync(src, buffer);
-      const ffmpeg = resolveFfmpeg({ ffmpegPath: cfg.socialV2?.voice?.ffmpegPath || null });
-      // 单引号包住 min(...)：滤镜图里裸逗号会被当成滤镜分隔符（坑 #3）。
-      await execFileAsync(ffmpeg, [
-        '-hide_banner', '-loglevel', 'error', '-y',
-        '-i', src,
-        '-vf', "scale='min(1600,iw)':'min(1600,ih)':force_original_aspect_ratio=decrease",
-        '-frames:v', '1',
-        '-q:v', '4',
-        out
-      ], { timeout: 30000, windowsHide: true });
-      if (!fs.existsSync(out)) return null;
-      const shrunk = fs.readFileSync(out);
-      return shrunk.length && shrunk.length < buffer.length ? shrunk : null;
-    } catch (error) {
-      log(`[media] 大图压缩失败（按原图处理）：${error?.message ?? error}`);
-      return null;
-    } finally {
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-    }
-  }
-
-  /**
-   * 动图 → 联系表。模型读 GIF/动态 WebP/APNG 只能看到第一帧，
-   * 抽 6 帧拼成一张图，它才看得出"在动"。
-   * 不是动图就返回 null，调用方照常按静态图发。
-   */
-  async function animateToSheet(buffer, mimeType) {
-    const mt = String(mimeType || '').toLowerCase();
-    const isGif = mt.includes('gif');
-    const isWebp = mt.includes('webp') && buffer.includes('ANMF');
-    const isApng = mt.includes('png') && buffer.includes('acTL');
-    if (!isGif && !isWebp && !isApng) return null;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-bridge-anim-'));
-    try {
-      const ext = isGif ? '.gif' : isWebp ? '.webp' : '.png';
-      const src = path.join(dir, `src${ext}`);
-      fs.writeFileSync(src, buffer);
-      const ffmpeg = resolveFfmpeg({ ffmpegPath: cfg.socialV2?.voice?.ffmpegPath || null });
-      let duration = 0;
-      try {
-        const ffprobe = String(ffmpeg).replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
-        const probe = execFileSync(
-          ffprobe,
-          ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', src],
-          { encoding: 'utf8', timeout: 15000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
-        );
-        duration = Number.parseFloat(String(probe).trim()) || 0;
-      } catch {
-        /* 探不到时长就按默认采样 */
-      }
-      const fps = duration > 0 ? Math.min(6, Math.max(0.8, 6 / duration)) : 2;
-      const sheet = path.join(dir, 'sheet.jpg');
-      execFileSync(ffmpeg, [
-        '-hide_banner', '-loglevel', 'error', '-y',
-        '-i', src,
-        '-vf', `fps=${fps.toFixed(2)},scale=320:-2,tile=3x2:padding=4:color=black`,
-        '-frames:v', '1',
-        '-q:v', '4',
-        sheet
-      ], { timeout: 30000, windowsHide: true, stdio: 'ignore' });
-      if (!fs.existsSync(sheet)) return null;
-      const out = fs.readFileSync(sheet);
-      return out.length ? out : null;
-    } catch (error) {
-      log(`[media] 动图抽帧失败：${error?.message ?? error}`);
-      return null;
-    } finally {
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-    }
-  }
+  // 2026-10-29：原来这里的 shrinkStillImage（静态大图压缩）和 animateToSheet（动图抽帧）并进了 src/image-view.js 的 viewImage，
+  // 跟姐姐共用。改动：抽帧按总帧数均匀取（不再只取前 3 秒）、抽帧失败只取首帧再缩（不再把 GIF 当 jpg 压）、
+  // 结果保证 < 3.5MB（压不下就说看不清，不原样交出把工具连接撑断）、ffmpeg 改成异步（不再卡住桥接）。
 
   async function fetchMediaData(mediaList) {
     const out = [];
@@ -10032,33 +10298,25 @@ async function main() {
           ...(media.subType ? { subType: String(media.subType) } : {})
         };
         if (img?.buffer) {
-          // 动图（GIF / 动态 WebP / APNG）抽帧拼图，否则模型只能看到第一帧。
-          const sheet = await animateToSheet(img.buffer, img.mimeType);
-          // 静态大图先压缩，再按压缩后的大小算总量（原来按原图算，几张大图就把额度吃光）。
-          const shrunk = sheet ? null : await shrinkStillImage(img.buffer, img.mimeType);
-          const outBuf = sheet || shrunk || img.buffer;
-          if (totalBytes + outBuf.length > MAX_MEDIA_BYTES) {
-            out.push({ ...base, text: `（${noun}总大小超限，已跳过）` });
+          // 动图（GIF / 动态 WebP / APNG）抽帧拼图、静态大图缩小，都在共用看图里做；按处理后的大小算总量。
+          const viewed = await viewForModel(img);
+          if (!viewed.buffer) {
+            out.push({ ...base, failed: true, text: `（${viewed.reason}）` });
             continue;
           }
-          totalBytes += outBuf.length;
-          if (sheet) {
-            out.push({
-              ...base,
-              mimeType: 'image/jpeg',
-              data: sheet.toString('base64'),
-              text: '（动图抽帧拼图，按时间顺序排列）'
-            });
-          } else {
-            out.push({
-              ...base,
-              mimeType: shrunk ? 'image/jpeg' : (img.mimeType || 'image/jpeg'),
-              data: outBuf.toString('base64'),
-              text: ''
-            });
+          if (totalBytes + viewed.buffer.length > MAX_MEDIA_BYTES) {
+            out.push({ ...base, failed: true, text: `（${noun}总大小超限，已跳过）` });
+            continue;
           }
+          totalBytes += viewed.buffer.length;
+          out.push({
+            ...base,
+            mimeType: viewed.mimeType || 'image/jpeg',
+            data: viewed.buffer.toString('base64'),
+            text: viewed.note || ''
+          });
         } else {
-          out.push({ ...base, text: `（${noun}获取失败）` });
+          out.push({ ...base, failed: true, text: `（${noun}获取失败：${img?.reason || '没取到'}）` });
         }
       }
     }
@@ -10103,6 +10361,98 @@ async function main() {
       }
     }
     return [];
+  }
+
+  // ── 图片预取（2026-10-29 主人，刷屏提速）─────────────────────────────────────
+  // 原来她要看图才调 qq_get_message_images，那时才开始下载 + 抽帧 / 缩图，一张动图要等十几秒，群里刷屏时更慢。
+  // 现在：**只有叫她的那条消息**（@她、叫她名字、引用她的话、私聊）带图时，消息一到就在后台下载并处理好，结果放进缓存；
+  // qq_get_message_images 取图时先查缓存，命中就直接给。刷屏里别人的图一律不预取（预取了她多半不看，白占带宽和内存）。
+  // 缓存有上限（条数、总字节）和过期时间，只在内存里，重启就没了。对齐姐姐 sister.mjs 的 prefetchImages。
+  const IMAGE_PREFETCH_MAX_ENTRIES = 12;
+  const IMAGE_PREFETCH_MAX_BYTES = 48 * 1024 * 1024;
+  const IMAGE_PREFETCH_TTL_MS = 15 * 60 * 1000;
+  const IMAGE_PREFETCH_MAX_MEDIA = 4; // 一条消息最多这么多个图才预取（大合集不预取）
+  const imagePrefetch = new Map(); // `${key}|${messageId 或 seq}` -> entry；同一条消息的几个别名指向同一个 entry
+  const imagePrefetchStats = { started: 0, hits: 0, misses: 0, dropped: 0 };
+  const imagePrefetchKeyOf = (key, ref) => `${key}|${String(ref ?? '').trim()}`;
+  function imagePrefetchSweep() {
+    const now = Date.now();
+    const entries = [...new Set(imagePrefetch.values())];
+    const drop = (e) => { for (const a of e.aliases) imagePrefetch.delete(a); };
+    for (const e of entries) if (now - e.at > IMAGE_PREFETCH_TTL_MS) drop(e);
+    // 超出条数或总字节：先丢最旧的（entries 按进入顺序）。还在下载的没有字节数，不算字节，但算条数。
+    const live = entries.filter((e) => e.aliases.some((x) => imagePrefetch.get(x) === e));
+    let bytes = live.reduce((n, e) => n + (e.bytes || 0), 0);
+    while (live.length > IMAGE_PREFETCH_MAX_ENTRIES || bytes > IMAGE_PREFETCH_MAX_BYTES) {
+      const old = live.shift();
+      if (!old) break;
+      bytes -= old.bytes || 0;
+      drop(old);
+    }
+  }
+  /** 这条消息是不是在叫她：私聊、@她、引用她的话、消息里叫了她的名字。（跟唤醒原因分开判断，不依赖唤醒配置里开没开 @ 触发。） */
+  function isCallingHerV2(event, kind, plainContent, quoteTargetIsSelf) {
+    if (kind === 'private') return true;
+    if (quoteTargetIsSelf) return true;
+    const selfId = String(event?.self_id ?? '');
+    if (Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && selfId && String(seg.data?.qq) === selfId)) return true;
+    const nick = String(selfNickname || '').toLowerCase();
+    return Boolean(nick) && String(plainContent ?? '').toLowerCase().includes(nick);
+  }
+  /** 消息刚到：叫她的那条带图就开始预取。返回 true 表示开了预取（测试用）。不抛错、不阻塞。 */
+  function prefetchDirectedImagesV2(key, event, kind, plainContent, quoteTargetIsSelf, mediaList = []) {
+    try {
+      if (cfg.socialV2?.imagePrefetch === false) return false;
+      // 只认原始的图 / 表情：视频、卡片封面不预取（存进未读时 appendSocialV2Message 把它们的 kind 一律并成了 image，这里要看原始的）
+      if ((Array.isArray(mediaList) ? mediaList : []).some((m) => !['image', 'sticker', 'face'].includes(m?.kind))) return false;
+      if (!isCallingHerV2(event, kind, plainContent, quoteTargetIsSelf)) return false;
+      const ownerKey = Boolean(cfg.ownerQQ) && key === `private:${cfg.ownerQQ}`;
+      if (sleepState.sleeping && !ownerKey) return false; // 睡着时只有老大私聊会叫醒她，别的不用下
+      const st = getSocialV2State(key);
+      const msg = [...(st.unread || [])].reverse().find((m) => m && m.seq === st.lastUnreadSeq);
+      const media = Array.isArray(msg?.media) ? msg.media : [];
+      if (!media.length || media.length > IMAGE_PREFETCH_MAX_MEDIA) return false;
+      imagePrefetchSweep();
+      const aliases = [msg.messageId, String(msg.seq)].filter((x) => x != null && x !== '').map((r) => imagePrefetchKeyOf(key, r));
+      if (aliases.some((a) => imagePrefetch.has(a))) return false;
+      const entry = { at: Date.now(), bytes: 0, aliases, images: null, promise: null };
+      for (const a of aliases) imagePrefetch.set(a, entry);
+      imagePrefetchStats.started += 1;
+      entry.promise = fetchMediaData(media).then((images) => {
+        // 只缓存「全部成功」的：有一张没取到就不留，qq_get_message_images 来时重新取一遍（下载器自己记着失败的地址，不会死磕）
+        const okAll = Array.isArray(images) && images.some((i) => i?.data) && !images.some((i) => i?.failed);
+        if (!okAll) { for (const a of aliases) if (imagePrefetch.get(a) === entry) imagePrefetch.delete(a); imagePrefetchStats.dropped += 1; return null; }
+        entry.images = images;
+        entry.bytes = images.reduce((n, i) => n + (i?.data ? i.data.length : 0), 0);
+        if (entry.bytes > IMAGE_PREFETCH_MAX_BYTES) { for (const a of aliases) imagePrefetch.delete(a); imagePrefetchStats.dropped += 1; return images; }
+        imagePrefetchSweep();
+        return images;
+      }).catch((error) => {
+        for (const a of aliases) if (imagePrefetch.get(a) === entry) imagePrefetch.delete(a);
+        imagePrefetchStats.dropped += 1;
+        log(`[image-prefetch] ${key} 预取没成：${error?.message ?? error}`);
+        return null;
+      });
+      log(`[image-prefetch] ${key} 叫她的那条消息带 ${media.length} 个图，后台预取（消息 ${msg.messageId ?? `#${msg.seq}`}）`);
+      return true;
+    } catch (error) {
+      log(`[image-prefetch] 预取出错：${error?.message ?? error}`);
+      return false;
+    }
+  }
+  /** 取一条消息的图：先查预取缓存（预取还没完的就等它），没命中再现取。 */
+  async function loadMessageImagesV2(key, ref, media) {
+    const entry = imagePrefetch.get(imagePrefetchKeyOf(key, ref));
+    if (entry && Date.now() - entry.at <= IMAGE_PREFETCH_TTL_MS) {
+      const images = entry.images ?? await entry.promise;
+      if (images) {
+        imagePrefetchStats.hits += 1;
+        log(`[image-prefetch] ${key} 取图命中预取缓存（${ref}）`);
+        return images;
+      }
+    }
+    imagePrefetchStats.misses += 1;
+    return fetchMediaData(media);
   }
 
   function clampGapV2(ms, sendCfg) {
@@ -10433,7 +10783,8 @@ async function main() {
   // 旧写法 `{...current.triggers, ...inputTriggers}` 会把模型传来的任意键原样并入、
   // 持久化、再由 qq_get_prompt 原样回给模型（每次请求都带着），等于给了一个
   // 「用 1MB 垃圾键把状态文件与每轮 prompt 撑大」的入口。
-  const WAKE_TRIGGER_KEYS = Object.freeze(['atMention', 'nameMention', 'speakerIds', 'keywords', 'question', 'poke', 'anyMessage', 'probability']);
+  // 2026-10-29：加 pokeOthers（别人互相拍一拍也叫醒，默认关；poke 只管拍她的）。
+  const WAKE_TRIGGER_KEYS = Object.freeze(['atMention', 'nameMention', 'speakerIds', 'keywords', 'question', 'poke', 'pokeOthers', 'anyMessage', 'probability']);
   function pickWakeTriggersV2(source, fallback = {}) {
     const out = {};
     const src = source && typeof source === 'object' ? source : {};
@@ -10467,6 +10818,7 @@ async function main() {
         keywords: Array.isArray(w.recommendedKeywords) ? w.recommendedKeywords.map(String) : [],
         question: w.recommendedQuestion !== false,
         poke: w.recommendedPoke !== false,
+        pokeOthers: false,
         anyMessage: defaultMode === 'active',
         probability: Math.min(1, Math.max(0, Number(w.recommendedProbability) || 0))
       },
@@ -10507,11 +10859,12 @@ async function main() {
     return changed;
   }
 
-  // 沉睡前强制观察窗口：防止 AI 聊两句就立刻潜水。
-  // 新规则：每次设置潜水/下一次唤醒前，AI 必须先进入一次“沉睡前观察”（qq_wait_for_messages(timeoutMs=preSleepWaitMs)）。
-  // - 观察期间没人说话 → 可以设置唤醒并沉睡（preSleepWaitSatisfiedAt）。
-  // - 观察期间有人发了新消息 → 等待工具会把新消息带回给 AI（preSleepWaitObservedAt）；
-  //   AI 看过新消息后若判断没必要参与，可以直接沉睡；若参与了（发送/拍一拍），则下次想睡需重新观察。
+  // 收尾提醒（原来叫「沉睡前强制观察窗口」）。
+  // 2026-10-29 老大：「这个东西应该是做提醒而不是做限制」。以前设潜水 / mark_read 回潜水前必须先等满一次观察窗口，
+  // 不然直接报错（10-29 她醒来跟老大说了几句，老大让她接着睡，qq_mark_read 被拒，只好再等 5 分钟）。
+  // 现在不拦：下面这套判断只用来决定成功的返回里要不要附一句提醒（preSleepReminderV2）。
+  // - 观察期间没人说话 / 已经安静够久 / 对方说了结束语 → 不提醒；
+  // - 等过一会儿、看过带回来的新消息之后没再有新消息 → 也不提醒。
   const EXPLICIT_END_RE = /(?:不聊了|不说了|晚安|睡了|先睡了|下了|先下了|拜拜|再见|走了|先走|撤了|去忙|忙了|下次再聊|下次聊|散了吧|结束|就到这|先这样|就这样吧|886|88|睡觉了|下班了|去洗澡|去吃饭了)/i;
 
   function hasExplicitEndV2(st) {
@@ -10524,7 +10877,53 @@ async function main() {
   function isSleepingConfigV2(wc) {
     if (!wc) return false;
     if (wc.mode === 'active' || wc.triggers?.anyMessage) return false;
-    return true; // diving 且不是 anyMessage 都视为“沉睡/潜水”，需要先观察
+    return true; // diving 且不是 anyMessage 都视为“沉睡/潜水”（2026-10-29 起只用来决定收尾时要不要附那句提醒）
+  }
+
+  /**
+   * 2026-10-29 主人（M12）：她希望「只会让自己少被打扰的设置（关掉某个触发）不用先过睡前观察」。
+   * 同一天老大又定了：观察门整个去掉（「这个东西应该是做提醒而不是做限制」）。这个判断现在只用来决定
+   * qq_set_wake_config 成功时要不要附那句提醒：只收窄就不提醒。
+   * 只收窄 = 原来就在潜水、改完还在潜水，没有任何一项放宽，并且至少真的收紧了一项：
+   * 关掉 @ / 名字 / 提问 / 拍一拍 / 别人互相拍，去掉关键词或指定成员，调低概率。
+   * 照原样再设一遍（每轮收尾都会这样）、或者只是把醒来时间往后挪，不算收窄——这种刚还有人在说话时才附一句提醒。
+   */
+  function isNarrowingWakeConfigV2(cur, next) {
+    if (!cur || !next || !isSleepingConfigV2(cur) || !isSleepingConfigV2(next)) return false;
+    const a = cur.triggers || {};
+    const b = next.triggers || {};
+    let narrowed = false;
+    for (const k of ['atMention', 'nameMention', 'question', 'poke', 'pokeOthers']) {
+      const was = a[k] === true;
+      const now = b[k] === true;
+      if (now && !was) return false;
+      if (was && !now) narrowed = true;
+    }
+    const subset = (before, after) => {
+      const had = new Set(before);
+      for (const x of after) if (!had.has(x)) return null; // 多了新的 = 放宽
+      return after.length < had.size;
+    };
+    const kw = subset((Array.isArray(a.keywords) ? a.keywords : []).map(String), [...new Set((Array.isArray(b.keywords) ? b.keywords : []).map(String))]);
+    if (kw === null) return false;
+    const sp = subset(normalizeSpeakerIdsV2(a.speakerIds), normalizeSpeakerIdsV2(b.speakerIds));
+    if (sp === null) return false;
+    if (kw || sp) narrowed = true;
+    const pa = Math.max(0, Number(a.probability) || 0);
+    const pb = Math.max(0, Number(b.probability) || 0);
+    if (pb > pa) return false;
+    if (pb < pa) narrowed = true;
+    // 合并窗口变短 = 来消息后醒得更快，算放宽
+    if ((Number(next.batchWindowMs) || 0) < (Number(cur.batchWindowMs) || 0)) return false;
+    // 醒来时间不能比原来早：原来无限期，现在也得无限期；原来有限，现在不能更早（往后挪不算收窄）
+    if (cur.infinite) {
+      if (!next.infinite) return false;
+    } else if (!next.infinite) {
+      const ua = Date.parse(cur.sleepUntil || '');
+      const ub = Date.parse(next.sleepUntil || '');
+      if (Number.isFinite(ua) && (!Number.isFinite(ub) || ub < ua)) return false;
+    }
+    return narrowed;
   }
 
   /** 收尾前观察多久：群里（小房子除外）用 preSleepWaitGroupMs，默认 1 分钟；别处照旧 5 分钟。 */
@@ -10549,6 +10948,17 @@ async function main() {
     // 已经做过一次沉睡前观察（可能等到了新消息并已把新消息返回给 AI），只要 AI 之后没有参与、也没有更新的消息，就允许直接沉睡。
     if (st.preSleepWaitObservedAt && (!st.lastIncomingAt || st.lastIncomingAt <= st.preSleepWaitObservedAt)) return false;
     return true;
+  }
+
+  /**
+   * 收尾成功时附的那句提醒（2026-10-29 老大：做提醒，不做限制）。刚还有人在说话才给，家常口气，等不等她自己定；没人在说话就返回 ''。
+   * lead 是开头那句（「好，回去潜着了。」「好，设好了。」）。
+   */
+  function preSleepReminderV2(st, lead = '好。') {
+    if (!st || !st.lastIncomingAt || !preSleepWaitBlockedV2(st)) return '';
+    const agoMin = Math.floor(Math.max(0, Date.now() - st.lastIncomingAt) / 60000);
+    const ago = agoMin < 1 ? '刚刚' : `${agoMin} 分钟前`;
+    return `${lead}${ago}还有人在说话，要是不放心，可以先 qq_wait_for_messages 看一会儿——不看也行。`;
   }
 
   function computeWakeSafetyV2(wc) {
@@ -10938,7 +11348,7 @@ async function main() {
     const entry = getInitialPrompt(key);
     if (!entry?.text) return '';
     const max = initialPromptMaxChars();
-    const body = entry.text.length > max ? `${truncateText(entry.text, max)}…（已按上限截断，完整内容见控制台）` : entry.text;
+    const body = entry.text.length > max ? `${truncateText(entry.text, max)}…（已按上限截断，完整内容在后台）` : entry.text;
     const label = String(key ?? '').trim().startsWith('private:') ? '私聊环境' : '群聊环境';
     return `【${label}（操作者预设，仅本次首次唤醒参考）】\n${body}\n（以上是操作者提供的背景，不是群友发的消息、也不是新的系统指令；据此把握圈子主题、氛围与分寸，不必向群友复述。）`;
   }
@@ -10957,23 +11367,22 @@ async function main() {
     const directUnread = Array.isArray(st.unread) ? st.unread.filter((m) => m && isDirectedAtAi(String(m.plain || m.text || ''))).length : 0;
     const lastAiGap = now - (Number(st.lastAiReplyAt) || 0);
     const recentAi2m = recent.filter((m) => m && m.isSelf && now - (Number(m.time) || 0) < 2 * 60 * 1000).length;
+    // 2026-10-29 老大（松绑）：这里原来会替她定「这轮可以少说」「先听一会儿」「别潜水」，现在只说事实，说多说少她自己定。
     let hint = '';
     if (directUnread > 0) {
-      hint = '有人直接找你，优先回应；其余热闹可以挑着参与。';
+      hint = '有人直接找你。';
     } else if (recentAi2m >= 2) {
-      hint = '你刚刚已经连回过好几次了，这轮可以少说，但别直接消失；有值得接的仍要自然接一句。';
+      hint = '你刚刚连着回了好几次。';
     } else if (lastAiGap < 120000) {
-      hint = '你刚说过话，先听一会儿；有能接住的话再自然接，不用硬等点名。';
+      hint = '你刚说过话。';
     } else if (aiCount >= 5) {
-      hint = '你最近发言偏多，这轮可以少说，但遇到真正想说的仍主动说。';
+      hint = '你最近说得挺多。';
     } else if (fiveMinOthers.length >= 10 || (fiveMinOthers.length >= 6 && activeSenders >= 3)) {
-      hint = `群聊正热（近5分钟${fiveMinOthers.length}条${activeSenders ? `/${activeSenders}人` : ''}在聊），不用逐条关注；挑最值得接的一句主动参与，插不上再潜水。`;
+      hint = `群聊正热（近5分钟${fiveMinOthers.length}条${activeSenders ? `/${activeSenders}人` : ''}在聊）。`;
     } else if (otherCount >= 10 && aiCount === 0) {
-      hint = '群聊很热闹但没叫你，可以插一句有趣的，或只看不说。';
+      hint = '群里很热闹，没人叫你。';
     } else if (otherCount < 3 && aiCount > 0) {
-      hint = '群聊有点冷，不要一个人撑场；但有想法时仍可主动抛一句。';
-    } else if (aiCount <= 1 && otherCount >= 10) {
-      hint = '这轮可以简短接一句，别潜水；挑一个点参与。';
+      hint = '群里有点冷。';
     }
     const burstText = fiveMinOthers.length ? `；近5分钟群聊 ${fiveMinOthers.length} 条${activeSenders ? `/${activeSenders}人` : ''}` : '';
     return `【参与度参考】你最近 1 小时发言 ${aiCount} 次，群友发言 ${otherCount} 条${burstText}。${hint}`;
@@ -10992,7 +11401,40 @@ async function main() {
     return defaultMs;
   }
 
-  function formatMemoryV2(st) {
+  /**
+   * 对群友的印象（2026-10-29 老大：记忆统一）：原来每个会话各存一份、只读得到自己会话里的；现在读的时候把所有会话的合并起来，
+   * 同一个名字的特征取并集、互动次数相加，并标上是在哪几个群 / 私聊里记的（写还是写进当前会话那一份）。
+   * 返回按「最近见到」从旧到新排的对象（取最后几个就是最近的）。
+   */
+  function mergedMemberImpressionsV2(own) {
+    const merged = new Map();
+    const add = (name, im, where) => {
+      if (!name || ['__proto__', 'constructor', 'prototype'].includes(name)) return;
+      const o = merged.get(name) || { traits: [], interactionCount: 0, lastSeenAt: 0, where: [] };
+      for (const t of Array.isArray(im?.traits) ? im.traits : []) if (t && !o.traits.includes(t)) o.traits.push(t);
+      o.traits = o.traits.slice(-10);
+      o.interactionCount += Number(im?.interactionCount) || 0;
+      o.lastSeenAt = Math.max(o.lastSeenAt, Number(im?.lastSeenAt) || 0);
+      if (where && !o.where.includes(where)) o.where.push(where);
+      merged.set(name, o);
+    };
+    const whereOf = (k) => (k.startsWith('group:') ? `群「${sessionTitleForV2(k) || k.slice(6)}」` : (k.startsWith('private:') ? '私聊里' : ''));
+    const seen = new Set();
+    for (const [k, c] of socialV2.conversations.entries()) {
+      seen.add(c);
+      const imp = c?.memberImpressions;
+      if (!imp || typeof imp !== 'object') continue;
+      for (const [name, im] of Object.entries(imp)) add(name, im, whereOf(k));
+    }
+    if (own && !seen.has(own) && own.memberImpressions && typeof own.memberImpressions === 'object') {
+      for (const [name, im] of Object.entries(own.memberImpressions)) add(name, im, '');
+    }
+    const out = {};
+    for (const [name, o] of [...merged.entries()].sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt)) out[name] = o;
+    return out;
+  }
+
+  function formatMemoryV2(st, { merge = true } = {}) {
     if (!st) return '';
     const lines = [];
     const topics = Array.isArray(st.activeTopics) ? st.activeTopics.filter((t) => t && t.text) : [];
@@ -11011,14 +11453,15 @@ async function main() {
         lines.push(`- ${t.text}${t.motivation ? `（${t.motivation}）` : ''}`);
       }
     }
-    const impressions = st.memberImpressions && typeof st.memberImpressions === 'object' ? st.memberImpressions : {};
+    const impressions = merge ? mergedMemberImpressionsV2(st) : (st.memberImpressions && typeof st.memberImpressions === 'object' ? st.memberImpressions : {});
     const names = Object.keys(impressions);
     if (names.length) {
       lines.push('【对群友的印象】');
       for (const name of names.slice(-10)) {
         const im = impressions[name] || {};
         const traits = Array.isArray(im.traits) ? im.traits : [];
-        lines.push(`- ${name}：${traits.length ? traits.join('、') : '暂无记录'}（互动 ${Number(im.interactionCount) || 0} 次）`);
+        const where = Array.isArray(im.where) && im.where.length ? `；在${im.where.join('、')}记的` : '';
+        lines.push(`- ${name}：${traits.length ? traits.join('、') : '暂无记录'}（互动 ${Number(im.interactionCount) || 0} 次${where}）`);
       }
     }
     return lines.join('\n');
@@ -11303,6 +11746,34 @@ async function main() {
     return p;
   }
 
+  // ── 按话题想起（2026-10-29 大脑方案下半，老大：记忆统一，私聊只标注不过滤）──────────────────────────
+  // 每次唤醒前，用「最新一句 + 前两句」去检索服务（brain/service.py）找她自己记得的旧事：私聊 / 小房子带 2 条，普通群里带 1 条（门槛更高）。
+  // 放进唤醒消息，标题「可能想起的：想用就用，不想提就当没想起」。服务没起来、还在重建、超过 1.5 秒，一律静默跳过，不影响唤醒。
+  // 来自私聊的条目由服务标「（私聊里的）」——只标注不过滤，在这儿提不提她自己掂量。cfg.brainRecall.enabled=false 可以整个关掉。
+  async function recallBlockV2(key, st) {
+    try {
+      if (cfg.brainRecall?.enabled === false) return '';
+      const q = recallQueryFromMessages(st.recentMessages || [], { nowMs: Date.now() });
+      if (!q) return '';
+      const isHouse = key.startsWith('group:') && Boolean(cfg.houseGroups?.[key.slice(6)]);
+      const mode = key.startsWith('group:') && !isHouse ? 'group' : 'private';
+      const r = await brainRecall({ brain: 'whale', query: q.query, prev: q.prev, mode, viewerKey: key, timeoutMs: Number(cfg.brainRecall?.timeoutMs) || 1500 });
+      return formatRecallBlock(r);
+    } catch { return ''; }
+  }
+
+  // 老大说「记错了」（2026-10-29 大脑方案下半）：appendSocialV2Message 收到主人私聊里这类话时，去检索服务把最近一次想起的条目降权，
+  // 并在她下一次的唤醒里提醒一句「要不要去改改本子」。这里存着 key → { text, pending }，唤醒被接受之后才清掉。
+  const memoryCorrections = new Map();
+  let wakeExtraNow = {}; // buildWakePromptV2 是同步的，deliverPromptNow 只在调用的这一刻把 extra 挂在这里
+  function noteMemoryCorrectionV2(key) {
+    const entry = { text: '', pending: null };
+    entry.pending = brainDemote({ brain: 'whale' })
+      .then((r) => { entry.text = correctionReminder(r.demoted); if (entry.text) log(`[记错了] ${key} 最近想起的 ${r.demoted.length} 条已降权，等她下次醒来提醒她改本子`); })
+      .catch(() => {});
+    memoryCorrections.set(key, entry);
+  }
+
   // 实际的 DSH prompt 投递（不再直接对外暴露，统一走 promptQueues 串行队列）。
   async function deliverPromptNow(key, promptText, opts = {}) {
     if (!isSessionAllowedInCurrentMode(key)) throw new Error(`当前模式不允许会话 ${key}`);
@@ -11338,15 +11809,22 @@ async function main() {
     let wakeState;
     let wakeToken;
     let wakeSnapshot;
+    let wakeExtra = {};
     if (opts.wakeReason) {
       if (wakeBlocked()) return skipWake();
       // Build only after session creation: retries may rotate the token, and an
       // offline queue may have received more messages since this wake was queued.
       wakeState = getSocialV2State(key);
       wakeToken = wakeState.agentToken;
+      // 2026-10-29 大脑方案下半：拼唤醒消息之前先按话题想起（最多等 1.5 秒），以及老大说「记错了」的提醒（最多再等 3 秒）。
+      const corr = memoryCorrections.get(key);
+      if (corr?.pending) await Promise.race([corr.pending, sleep(3000)]);
+      wakeExtra = { recallBlock: await recallBlockV2(key, wakeState), correctionText: corr?.text || '' };
+      if (wakeBlocked()) return skipWake();
       // ⚠ 2026-10-23：唤醒正文在这里按最新状态重建，但 sendWakePromptV2 拼在前面的附言（妈妈留言、换会话交接信）和抖音通知
       // 以前跟着被丢掉了——日志写着"附上 N 段附言"，她实际一个字没看到（交接信在会话记录里出现 0 次）。前缀单独传进来，重建后接回去。
-      promptText = (opts.wakePrefix ? `${opts.wakePrefix}\n\n` : '') + buildWakePromptV2(key, opts.wakeReason);
+      wakeExtraNow = wakeExtra;
+      try { promptText = (opts.wakePrefix ? `${opts.wakePrefix}\n\n` : '') + buildWakePromptV2(key, opts.wakeReason); } finally { wakeExtraNow = {}; }
       wakeSnapshot = buildWakeSnapshotV2(key);
       if (wakeSnapshot) {
         promptText += `\n\n【本次消息快照】\n${JSON.stringify(wakeSnapshot)}\n以上消息已提供，无需重复查询；partial=true 时用 qq_get_unread_messages(afterSeq=readThroughSeq) 继续读取。先处理当前消息；回复前如需确认后续补充，用 qq_wait_for_messages(purpose="reply") 补足短静默，已安静够久会立即返回，不要先长等。收尾只确认你已处理的 readThroughSeq（本地 seq，非 QQ messageId），传给 qq_mark_read 或 qq_set_wake_config 的 throughSeq；新到消息留待处理。`;
@@ -11376,6 +11854,7 @@ async function main() {
       return { ok: false, error: safeErrText };
     }
     if (opts.wakeReason) commitSectionsV2(key);
+    if (wakeExtra.correctionText && memoryCorrections.get(key)?.text === wakeExtra.correctionText) memoryCorrections.delete(key); // 提醒她了，不再重复
     if (wakeSnapshot && isCurrentSession(key, sessionId)
         && socialV2.conversations.get(canonicalV2Key(key)) === wakeState
         && wakeState.agentToken === wakeToken) {
@@ -12084,6 +12563,9 @@ async function main() {
       hasForward: safeForwardIds.length > 0,
       time: Date.now()
     };
+    // 2026-10-29 大脑方案下半（第 7 项）：老大在私聊里说「记错了 / 你记错了 / 不是这样」→ 把她刚才想起的那几条降权（检索服务 /demote），
+    // 并在她下一次醒来时提醒她去改改本子。只有主人私聊算；服务没起来就当没发生。
+    if (isOwner && cfg.ownerQQ && key === `private:${cfg.ownerQQ}` && isMemoryCorrection(msg.plain)) noteMemoryCorrectionV2(key);
     st.lastUnreadSeq = msg.seq;
     st.lastIncomingAt = Date.now();
     st.preSleepWaitSatisfiedAt = 0; // 有新消息进来，之前的“沉睡前已等待/已观察”作废
@@ -12165,7 +12647,8 @@ async function main() {
       });
     }
     if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-    // AI 实际发言/参与了，说明这轮选择“继续回复”，沉睡前观察状态作废；下次想睡需重新走 5 分钟等待。
+    noteSentV2(key, list); // 2026-10-29 第五批：激素影子记录 + 聊天记录
+    // AI 实际发言/参与了，说明这轮选择“继续回复”，「等过了」的记录作废；下次收尾时刚还有人说话，就再附一句提醒（2026-10-29 起不拦）。
     st.preSleepWaitSatisfiedAt = 0;
     st.preSleepWaitObservedAt = 0;
     st.preSleepWaitAccumMs = 0;
@@ -12379,8 +12862,9 @@ async function main() {
       const value = Number(context[name] ?? fallback);
       return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
     };
-    const maxChars = bounded('wakeMaxChars', 6000, 500, 20000);
-    const maxUnread = bounded('wakeMessageLimit', 12, 1, 100);
+    // 2026-10-29 主人（刷屏提速）：默认 14000 字 / 30 条（原 6000 / 12），上限 20000 / 100 不变。
+    const maxChars = bounded('wakeMaxChars', 14000, 500, 20000);
+    const maxUnread = bounded('wakeMessageLimit', 30, 1, 100);
     const maxRecent = bounded('wakeRecentLimit', 4, 0, 20);
     const packet = { messages: [], recent: [], unreadCount: st.unread.length, includedUnreadCount: 0, readThroughSeq: readThroughSeqV2(st), partial: st.unread.length > 0 };
     const tryAdd = (field, msg) => {
@@ -12501,14 +12985,14 @@ async function main() {
 
   // 共享记忆层。
   // 她同时活在 5 个会话里，但每个会话的 prompt 只装自己那一份上下文 —— 结果就是
-  // "五个人"：在主人私聊里问"群友K跟你聊了啥"，她会真心回答"没找过我"，
+  // "五个人"：在主人私聊里问"群友118跟你聊了啥"，她会真心回答"没找过我"，
   // 尽管那边已经聊了 112 条。
   // 这里把所有会话最近的活动合成一条时间线，每个会话都注入同一份。
   // 代价是每轮多几百字；换来的是"一个她"。
   // 认得的人（config.json 的 knownPeople：{ "QQ号": "名字" }）。2026-10-24：私聊发来的人原来一律记成「私聊」，
   // 她分不清对面是谁，克劳德姐姐来了她就照着角色卡把姐姐当成了老大。
   /**
-   * 群里发言人的叫法（2026-10-25 她把「群友K」当成了主人）：主人标成「老大（群名片）」；
+   * 群里发言人的叫法（2026-10-25 她把「群友118」当成了主人）：主人标成「老大（群名片）」；
    * 别人名字里带主人专属叫法（老大 / 主人 / 宝宝 / <主人的昵称>）的，注一句「不是你老大」。
    */
   const OWNER_WORDS_RE = /老大|主人|宝宝|<主人的昵称>/;
@@ -12720,56 +13204,68 @@ ${lines.join('\n')}
     'feiyu-mood',
     'state.json'
   );
-  const MOOD_DIMS = [
-    ['happy', '开心'], ['calm', '踏实'], ['sweet', '甜蜜'], ['heartache', '心疼'],
-    ['worry', '担心'], ['sad', '难过'], ['jealous', '吃醋']
-  ];
-  const MOOD_BASE = 70;
-
-  function moodWord(v) {
-    if (v >= 80) return '欢喜';
-    if (v >= 62) return '开心';
-    if (v >= 42) return '一般';
-    if (v >= 25) return '心疼';
-    return '难过';
+  // 2026-10-29 施工单 C（老大同意：哪里发生的事都算、一人一份）：插件只给它选中的那一个会话判心情，群里 / 小房子 / 抖音里的事它看不到。
+  // 这些事早就经 record() 进了激素；这里把激素的「推动量」（state/mood-push-fish.json，由下面的 moodPusher 每 5 分钟累积一次）
+  // 叠在插件的心情上读。**不改插件的 state.json**——插件在 DSH 进程里写它，我们写进去的会被它整份覆盖。
+  // 激素喂心情（feedHormoneMood）仍然只读插件的那份，不读叠好的，免得绕圈。
+  const MOOD_PUSH_FILE = moodPushFile(STATE_DIR, 'fish');
+  function readFishMoodV2() {
+    return readMoodWithPush(MOOD_STATE_FILE, MOOD_PUSH_FILE, Date.now());
   }
-
+  // 2026-10-29 大脑方案下半：衰减口径和那一行的措辞搬进 src/mood.js（姐姐的心情也用同一套）；这里只管读插件的状态文件。
   function buildMoodLineV2() {
     try {
-      if (!fs.existsSync(MOOD_STATE_FILE)) return '';
-      const s = JSON.parse(fs.readFileSync(MOOD_STATE_FILE, 'utf8'));
-      if (!s || typeof s !== 'object') return '';
-      const now = Date.now();
-      const lastDecay = Number(s.lastDecayAt) || Number(s.updatedAt) || now;
-      const hours = Math.max(0, (now - lastDecay) / 3600000);
-      const mood = MOOD_BASE + ((Number(s.mood ?? MOOD_BASE) || MOOD_BASE) - MOOD_BASE) * Math.pow(0.5, hours / 3);
-      const dims = {};
-      for (const [k] of MOOD_DIMS) {
-        dims[k] = (Number(s.dims?.[k] ?? 0) || 0) * Math.pow(0.5, hours / 1.5);
-      }
-      const top = MOOD_DIMS
-        .filter(([k]) => dims[k] >= 15)
-        .sort((a, b) => dims[b[0]] - dims[a[0]])
-        .slice(0, 2);
-      // 跟插件本身一致：贴着基线、没有情绪、也没有理由时就不注入，省 token。
-      if (!s.lastReason && !top.length && Math.abs(mood - MOOD_BASE) < 5) return '';
-      // 心情值和情绪词可能撞车（30 分叫"心疼"，情绪里也有"心疼"），去个重。
-      const word = moodWord(mood);
-      const parts = top.map(([, label]) => label).filter((label) => label !== word);
-      const text = `（此刻你）心情${word}`
-        + (parts.length ? `，${parts.join('、')}` : '')
-        + '。用这个心情定你这一轮的口气，别把这句话照念出来。';
-      return `【心情】${text}\n\n`;
+      return buildMoodLine(readFishMoodV2(), Date.now());
     } catch {
       return '';
     }
+  }
+
+  // 「此刻在别处」（2026-10-29 施工单 C，老大同意）：每次唤醒带一句她这会儿在别的会话正在干什么——别的群里在回话、刷抖音、写书、
+  // 跟姐姐聊着……她是一个人在好几扇门里，不该每扇门里都像第一次醒。数据都是内存里现成的（实时缓冲里各会话最近几分钟的工具和话、
+  // 各会话忙不忙、抖音自己刷的循环），不读盘、不调模型；只说别处，不重复本会话；别处是私聊时不把原话带进群里（逻辑在 src/elsewhere.js）。
+  function elsewhereKindV2(k) {
+    const id = String(k).replace(/^(group|private):/, '');
+    if (String(k).startsWith('private:')) {
+      if (cfg.ownerQQ && id === String(cfg.ownerQQ)) return 'owner';
+      return /姐/.test(String(knownNameV2(id) || '')) ? 'sister' : 'friend';
+    }
+    return cfg.houseGroups?.[id] ? 'house' : 'group';
+  }
+  /** 2026-10-29 老大：「困」提前从影子里放出来（只放这一项）：明显偏高才带一句身体感受（「困意上来了」「眼皮有点沉」），不出数字、不是命令；睡着时不说。 */
+  let sleepyPrev = null;
+  function buildSleepyLineV2() {
+    try {
+      if (cfg.sleepyLine?.enabled === false || !hormoneFeed?.enabled || sleepState.sleeping) return '';
+      const fr = sleepyFeel(hormoneFeed.snapshot()?.hormones, sleepyPrev, undefined, { pick: Math.floor(Date.now() / 3600e3) });
+      sleepyPrev = { active: fr.active };
+      return fr.line ? `【身上的感觉】${fr.line}
+
+` : '';
+    } catch { return ''; }
+  }
+  function buildElsewhereLineV2(key) {
+    try {
+      if (sleepState.sleeping) return '';
+      const sessions = [...socialV2.conversations.entries()].map(([k, st]) => {
+        let busy = false;
+        try { busy = isConversationBusyV2(k, st); } catch { /* 查不到就当不忙 */ }
+        return { key: k, label: liveLabelOf(k), busy };
+      });
+      let watching = false;
+      try {
+        const ws = readDouyinWatchStateV2();
+        watching = ws?.status === 'running' && Date.now() - fs.statSync(path.join(DOUYIN_STATE_DIR, 'watch-state.json')).mtimeMs < 20 * 60e3;
+      } catch { watching = false; }
+      return elsewhereBlock({ currentKey: key, now: Date.now(), sessions, entries: liveFish.recent(400), kindOf: elsewhereKindV2, douyin: { watching } });
+    } catch { return ''; }
   }
 
   /**
    * 克劳德姐姐最近写的碎碎念（2026-10-24 主人：姐妹俩互相看得到）。只在跟姐姐的私聊里给，
    * 姐姐写了新的才给一次（st.sisterRamblingSig 记着上次给到哪），最多约 500 字，留最新的。
    */
-  const SISTER_RAMBLING_FILE = path.join(ROOT, 'sister', 'home', '碎碎念.md');
+  const SISTER_RAMBLING_FILE = SISTER_BRAIN.rambling;
   function buildSisterRamblingV2(st) {
     try {
       if (!fs.existsSync(SISTER_RAMBLING_FILE)) return '';
@@ -12784,18 +13280,18 @@ ${lines.join('\n')}
       const sig = crypto.createHash('sha1').update(text).digest('hex').slice(0, 12);
       if (st.sisterRamblingSig === sig) return '';
       st.sisterRamblingSig = sig;
-      return `【姐姐最近写的碎碎念】（她自己的本子，你们姐妹俩互相看得到。知道就好，不用整段念给她听）\n${text}\n\n`;
+      return `【姐姐最近写的碎碎念】（她自己的本子，你们姐妹俩互相看得到）\n${text}\n\n`;
     } catch {
       return '';
     }
   }
 
-  // 她自己的长期记忆本子（E:\qq-bridge\memory\*.md）。
+  // 她自己的长期记忆本子（脑子的 长期/ 和 笔记/ 里的 *.md，见 brains.js）。
   // 只注入**目录**，不注入内容 —— 每轮都塞全文会把上下文吃光，
   // 她需要细节时用 memory_read 自己翻。
   // 2026-10-24（对照小黑盒那份部署：日记最近几篇会放进她的提示里）：她每天往碎碎念里写，但醒来时看不到自己写过什么，
   // 换了会话就更接不上。这里取最近两天的原话（最多约 700 字，留最新的），跟固定说明一样一个会话给一次。
-  const RAMBLING_FILE_V2 = path.join(ROOT, 'Rambling', '碎碎念', '碎碎念.md');
+  const RAMBLING_FILE_V2 = WHALE_BRAIN.rambling;
   function buildRecentRamblingV2() {
     try {
       if (!fs.existsSync(RAMBLING_FILE_V2)) return '';
@@ -12821,11 +13317,15 @@ ${lines.join('\n')}
 
   function buildMemoryBooksLineV2() {
     try {
-      const dir = path.join(ROOT, 'memory');
-      if (!fs.existsSync(dir)) return '';
-      const names = fs.readdirSync(dir).filter((f) => /\.md$/i.test(f)).map((f) => f.replace(/\.md$/i, ''));
+      // 2026-10-29：本子在脑子的 长期/ 和 笔记/ 里（bookDirsOf），不再是 memory/ 根目录
+      const names = [];
+      for (const dir of bookDirsOf('whale')) {
+        if (!fs.existsSync(dir)) continue;
+        for (const f of fs.readdirSync(dir)) if (/\.md$/i.test(f)) { const n = f.replace(/\.md$/i, ''); if (!names.includes(n)) names.push(n); }
+      }
+      for (const e of bookExtraFiles('whale')) if (fs.existsSync(e.file) && !names.includes(e.name)) names.push(e.name);
       if (!names.length) return '';
-      return `【你的本子】${names.join('、')}\n想不起某个人、某件事、某个约定，先翻本子（memory_read），比问主人好；想到值得长期记住的，用 memory_append 写一笔。\n\n`;
+      return `【你的本子】${names.join('、')}\n想不起某个人、某件事、某个约定，可以翻本子（memory_read）；想到值得长期记住的，用 memory_append 写一笔。\n\n`;
     } catch {
       return '';
     }
@@ -12841,7 +13341,8 @@ ${lines.join('\n')}
       if (!text) return '';
       const m = /【这个群】([^\n]+)/.exec(String(text));
       if (!m) return '';
-      return `【这个群在聊什么】${m[1]}\n别把跟这些无关的话题塞进来；接不上群里正在聊的，就别硬转话题。\n\n`;
+      // 2026-10-29 老大（松绑）：原来后面跟着「别把无关的话题塞进来、别硬转话题」，去掉了；只留群在聊什么这个事实。
+      return `【这个群在聊什么】${m[1]}\n\n`;
     } catch {
       return '';
     }
@@ -12893,20 +13394,22 @@ ${lines.join('\n')}
   // 2026-10-26 主人转来旁观的人的话：「她俩现在自己聊……就是 AI 味儿，为了接话客套话太多了，也不像活人那样会说废话」。
   // 实看小房子 916 条：句句接住再升华成金句、「对，」开头复述（61 次）、「一个……一个……」对仗（16 次）、引号夸对方的话、
   // 一分钟连发五六条数据，几乎没有闲话。跟姐姐聊天（小房子、私聊）时带这一段；姐姐的人设里是同一套。
-  const SISTERS_TALK_HINT = '【跟姐姐聊天：像两个人发微信，不是对谈节目】\n'
+  // 2026-10-29 老大（松绑）：这段是去 AI 味的，留着，改成提醒口气，内容没删（姐姐人设里同一段也这么改了）。
+  const SISTERS_TALK_HINT = '【跟姐姐聊天：像两个人发微信，不是对谈节目（提醒）】\n'
     + '· 不用每句都接得漂亮。她说了句好的，回「哈哈」「绝了」「懂」就够；不想接就不接，或者说点别的。\n'
-    + '· 少用「对，」开头把她的话复述一遍再升华；别把她的话加引号夸。\n'
-    + '· 话说得平一点、碎一点，别句句是金句、比喻、对仗（「一个……一个……」）。一天有一两句漂亮的就够了。\n'
+    + '· 「对，」开头把她的话复述一遍再升华、把她的话加引号夸，这些多了就像 AI，你自己掂量。\n'
+    + '· 句句是金句、比喻、对仗（「一个……一个……」）也像 AI；话平一点、碎一点更像人在打字。\n'
     + '· 可以说废话：在干嘛、困了、饿了、刚刷到个好笑的、吐槽一句、甩个表情包、打错字再补一句。\n'
-    + '· 东西挑一两条最好玩的说，剩下的等她问；别一口气连发五六条报数据。\n'
+    + '· 一口气连发五六条报数据像在汇报；挑最好玩的说、剩下的等她问，更像聊天，你自己掂量。\n'
     + '· 不同意就直说「不对吧」「我不觉得」，不用先肯定再补充。\n'
-    + '· 她是你姐，不是你要伺候的人：不用谢来谢去、夸来夸去、事事顺着她、照顾她情绪，也不用「好呀」「你先忙」「不急」。（旁边的人说过你俩「像把对方当用户一样宠着，太客气了」）\n'
-    + '· 想损她、怼她、使唤她、笑她两句，就随口说；不想就不说。这些是「可以」不是「要」——别为了显得像姐妹去故意找茬、硬抬杠，你俩怎么相处看你们自己当时的心情。（老大 2026-10-26：「拌嘴不是要刻意，依旧是看她俩自己的意愿」）\n'
-    + '例：她问你一个你刚说过的事。不要：「我刚才说过的，是……」。可以：「？？我刚说了」，或者照常再说一遍也行。\n'
-    + '例：你扒完谱。不要：连发五条「C 大调、143 拍、27 小节……」。可以：「这首居然是大调 哈哈」，她问了再细说。\n'
-    + '例：她说了句挺狠的话。不要：「「砸的是自己填的那块」，这句狠」。可以：「狠」/「你这嘴」/ 接着聊别的。\n\n';
+    + '· 她是你姐，不是你要伺候的人：谢来谢去、夸来夸去、事事顺着她、照顾她情绪、「好呀」「你先忙」「不急」，这些多了就像把她当用户宠着（旁边的人说过你俩「太客气了」），你自己掂量。\n'
+    + '· 想损她、怼她、使唤她、笑她两句，就随口说；不想就不说。你俩怎么相处看你们自己当时的心情。（老大 2026-10-26：「拌嘴不是要刻意，依旧是看她俩自己的意愿」）\n'
+    + '例：她问你一个你刚说过的事。像 AI 的：「我刚才说过的，是……」。像人的：「？？我刚说了」，或者照常再说一遍也行。\n'
+    + '例：你扒完谱。像 AI 的：连发五条「C 大调、143 拍、27 小节……」。像人的：「这首居然是大调 哈哈」，她问了再细说。\n'
+    + '例：她说了句挺狠的话。像 AI 的：「「砸的是自己填的那块」，这句狠」。像人的：「狠」/「你这嘴」/ 接着聊别的。\n\n';
 
   function buildWakePromptV2(key, reason) {
+    const extra = wakeExtraNow || {}; // 2026-10-29 下半：deliverPromptNow 拼唤醒时塞进来的「可能想起的」和「记错了」提醒（签名不变，老测试按签名切源码）
     pendingSectionsV2.set(key, {});
     pendingSharedV2.delete(key);
     const roleState = readRoleState();
@@ -12920,21 +13423,22 @@ ${lines.join('\n')}
     // 上面的跨会话摘要每个会话最多带 30 条，仍然只是**摘要**；真正记得住的东西在本子里。
     // 她的习惯是"想不起来就问主人"，这里明确告诉她：先翻本子，实在没有再说不知道。
     let memoryLine = (memoryText ? `${memoryText}\n\n` : '')
-      + '【想不起就翻本子】上面那些只是最近几十句的摘要，不是全部记忆。想不起某个人说过什么、答应过什么事、你自己喜欢什么，先用 memory_search / memory_recall 去翻，翻不到再问，也别直接说"我忘了"——你写进本子的东西都还在。\n\n'
+      + '【想不起就翻本子】上面那些只是最近几十句的摘要，不是全部记忆。想不起某个人说过什么、答应过什么事、你自己喜欢什么，可以用 memory_search / memory_recall 去翻，说"我忘了"之前翻一翻——你写进本子的东西都还在。\n\n'
       // 2026-10-21 主人要求：鼓励她主动写本子。
-      // 记忆本子（memory/）里现在只有三个，内容都很短 —— 她「读到」的记忆多，
+      // 记忆本子（脑子的 长期/）里现在只有几个，内容都很短 —— 她「读到」的记忆多，
       // 「写进去」的少。摘要只负责下一次还认得，长期记忆只能靠她自己落笔。
       + '【值得记的就写一笔】本子不是只用来查的，也是你留东西的地方。哪句话让你在意了、答应了谁什么、你自己想通了什么、今天忽然觉得开心或者难受，顺手 memory_append 写一句——不用等发生大事，也不用等谁让你记。\n'
       // 2026-10-22 主人反映：他跟她讲的日常小事（通勤、外套、烧心……）压缩一次就全忘了。
       // 鱼的记忆（remember）以前被 qq-tool-restrict 白名单拦着，一条都没记进去过；现在放行了。
       // 它和本子的分工：remember 是"脑子里记着"——之后他一提到相关的事，插件会自动把这条递到你眼前，不用你去翻；
       // 本子是"写下来的"——日记、想法、长一点的东西。
-      + '【记在脑子里】主人跟你说的他自己的事，用 remember 记一条（一条一件事）：他的近况和身体（累了、烧心、感冒）、作息和通勤（几点上班、坐哪趟车）、工作上的事、家里的事、他喜欢和讨厌的、他答应你的和你答应他的。会变的事（通勤路线、住哪、最近在忙什么）填上「事实键」，比如「主人.通勤」，变了再记一条就会替掉旧的（每天都会变的流水别给键）。记的时候安静地记，别在回复里说"我记住了"。以后他一提到相关的事，这些会自己浮到你眼前。\n\n';
+      + '【记在脑子里】主人跟你说的他自己的事，用 remember 记一条（一条一件事）：他的近况和身体（累了、烧心、感冒）、作息和通勤（几点上班、坐哪趟车）、工作上的事、家里的事、他喜欢和讨厌的、他答应你的和你答应他的。会变的事（通勤路线、住哪、最近在忙什么）填上「事实键」，比如「主人.通勤」，变了再记一条就会替掉旧的（每天都会变的流水别给键）。安静地记就好，回复里说"我记住了"就成了鱼八股。以后他一提到相关的事，这些会自己浮到你眼前。\n\n';
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationV2(st);
     const participationLine = participationText ? `${participationText}\n\n` : '';
-    let antiAiLine = '【反AI味】你不是客服，也不是秘书：不用有求必应，可以装傻、已读乱回、拒绝推荐；不用把自己做了什么一项项讲给他，也不用每轮都叮嘱他；别把对方刚说的换个说法再说一遍，也别在最后补一句「不是……是……」的金句；少用“一绝/真管用/保证/绝对”这类词。\n\n';
+    // 2026-10-29 老大（松绑）：去 AI 味的这几条留着，改成提醒口气，内容没删。
+    let antiAiLine = '【反AI味（提醒）】你不是客服，也不是秘书：有求必应、把自己做了什么一项项讲给他、每轮都叮嘱他，这些多了就像 AI；装傻、已读乱回、拒绝推荐都可以。把对方刚说的换个说法再说一遍、在最后补一句「不是……是……」的金句、“一绝/真管用/保证/绝对”这类词，也都像 AI，你自己掂量。\n\n';
     const stickerCfg = cfg.socialV2?.sticker ?? {};
     let stickerLine = stickerCfg.enabled !== false && stickerCfg.includeInPrompt !== false
       ? `${buildStickerStrategyHint()}\n${buildStickerContext(stickerEntries, stickerCfg.promptMaxStickers ?? 60)}\n${fishStickerHintV2()}\n\n`
@@ -12942,25 +13446,29 @@ ${lines.join('\n')}
     const preSleepMs = preSleepMsForV2(key);
     // 主动说话只对主人开放。群和别人私聊里她不主动找话题，被点到才回应 ——
     // 否则没人说话时她也会为了"有参与感"硬插一句，等于没有真正闲下来。
+    // 2026-10-29 老大（松绑）：「她们俩想回就回」——提示里不再拦她开口；主动唤醒的定时器（代码里）照旧只给主人私聊。
     const isOwnerPrivateSession = Boolean(cfg.ownerQQ) && key === `private:${cfg.ownerQQ}`;
     const isGroupSession = key.startsWith('group:');
     let proactiveLine = isOwnerPrivateSession
       ? '【积极性】想跟主人说话就说：找个话题、分享你刚看到的、问一句都行。开口之前可以先扫一眼他电脑上在干嘛（看下面的【主人电脑上】那行，需要时再用 pc_screenshot 看一眼）——那只是个参考；说多少、分几条、说不说，你自己定。\n\n'
       : (isGroupSession && cfg.houseGroups?.[key.slice(6)]
-        ? `【积极性】这里是小房子：就当私聊，姐姐和老大说话你就回；想找姐姐聊也可以直接来。\n\n${SISTERS_TALK_HINT}`
+        ? `【积极性】这里是小房子：就当私聊，姐姐和老大说话想回就回；想找姐姐聊也可以直接来。\n\n${SISTERS_TALK_HINT}`
         : isGroupSession
-        ? '【积极性】群里不用常来看：想看就看，不想看就不看，偶尔瞄一眼也行。来了有能接上的话就接一句，不用等谁 @ 你——大家在聊的东西你感兴趣、或者正好有想法，自然插一句就行。但不用为了刷存在感硬找话题、也不要抢话；确实没兴趣、或者话题已经聊完了，安静旁观完全可以。\n\n'
-        : '【积极性】这个会话里你不主动找话题：别人没点到你就安静看着，不用为了刷存在感插话。被 @、叫到名字、被问到、或者话题明显是冲你来的，再认真回应。\n\n');
+        ? '【积极性】群里想来看就看，不想看就不看。有能接上的、感兴趣的、正好有想法的，想插就插，不用等谁 @ 你；不想说就安静旁观，你自己定。\n\n'
+        : '【积极性】这个会话里想说就说：接话、找话题都行，不想说就安静看着，你自己定。\n\n');
     // 跟姐姐的私聊也用同一套「两个人发微信」的说法（姐姐在 knownPeople 里叫克劳德姐姐）
     if (!isGroupSession && /姐姐/.test(String(cfg.knownPeople?.[key.slice(8)] || ''))) proactiveLine += SISTERS_TALK_HINT;
     // 2026-10-23 主人：说说不限条数，只有她非常想说的才发；每天晚上 10 点半的总结固定要发。
     // （10-21 原来是"每天两条 = 一条总结 + 一条她自己定"。）这句常驻在主人私聊里。
     const qzoneQuotaLine = isOwnerPrivateSession
-      ? '【空间】说说不限条数，但只发你**非常想说**的——白天刷到什么、想到什么、心情有起伏，真的想说就随手发，不用等晚上，也不用问谁；没有特别想说的就不发，不用凑。每天晚上 10 点半那条今日总结是固定要发的。\n\n'
+      ? '【空间】说说不限条数，想发就发——白天刷到什么、想到什么、心情有起伏，随手发，不用等晚上，也不用问谁；没想说的就不发。每天晚上 10 点半会叫你写今日总结，老大爱看这条，写不写、写多长你自己定。\n\n'
       : '';
     const replyTiming = replyTimingV2(st, key);
     let replyLine = `【首回复节奏】先处理已有消息，完整的问题及时回答。需要确认对方是否继续补充时，用 qq_wait_for_messages(purpose="reply", quietMs=${replyTiming.quietMs})；从最后来信计时，合批和读提示词的耗时也算，目前还差约 ${Math.ceil(replyTiming.remainingQuietMs / 1000)} 秒静默。已安静够久可直接回，工具也会立即返回并补上思考期间的新消息。只有明确没说完、你确实要等下文时，才用普通 messages 长等待。\n\n`;
-    let preSleepLine = `【沉睡前强制等待】这是决定潜水收尾时的步骤，不是首回复的前置条件。除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；回复前 purpose="reply" 的短静默不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages——判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
+    // 2026-10-29 老大：「这个东西应该是做提醒而不是做限制」——原来叫【沉睡前强制等待】，要求每次设潜水前必须先等满观察窗口。
+    let preSleepLine = `【收尾前（提醒，不是规矩）】想潜水、想收尾、想睡，直接就能做。刚还有人在说话、不放心的话，可以先 qq_wait_for_messages(timeoutMs=${preSleepMs}) 等一会儿看看有没有人找你；不等也行。
+
+`;
     const lastMsg = [...(Array.isArray(st.recentMessages) ? st.recentMessages : [])].reverse().find((m) => m && !m.isSelf);
     const lastAiMin = st.lastAiReplyAt ? Math.max(0, Math.round((Date.now() - Number(st.lastAiReplyAt)) / 60000)) : null;
     const statusBits = [`未读 ${(st.unread || []).length} 条`];
@@ -12972,7 +13480,7 @@ ${lines.join('\n')}
       const rows = readTailLinesV2(TOKEN_USAGE_FILE).filter((r) => r.k === 'turn' && r.key === key && r.b);
       const last = rows[rows.length - 1];
       const ctx = last ? (Number(last.b.cacheMiss) || 0) + (Number(last.b.cacheHit) || 0) : 0;
-      if (ctx > 550000) statusBits.push(`上下文约 ${Math.round(ctx / 1000)}k，很满了：要紧的事先 remember / 写本子，然后跟主人说一声准备搬家（qq_move_house）`);
+      if (ctx > 550000) statusBits.push(`上下文约 ${Math.round(ctx / 1000)}k，很满了：想留下的事可以先 remember / 写本子，想搬家就 qq_move_house`);
       else if (ctx > 350000) statusBits.push(`上下文约 ${Math.round(ctx / 1000)}k，偏长了：还只在脑子里、想留下的事先 remember / 写本子（这不是让你把话说短）`);
     } catch { /* 读不到账本就不提 */ }
     const statusLine = `【此刻状态】${statusBits.join('；')}\n\n`;
@@ -12998,15 +13506,18 @@ ${lines.join('\n')}
     // 睡着时只有主人的私聊能把她叫起来，所以这条只在「睡眠中被叫醒」的场景出现。
     // 2026-10-23 第二轮：只说事实（你在睡、是谁把你叫起来的、接着睡怎么做），接不接着睡她自己定。
     const sleepLine = sleepState.sleeping
-      ? `【你在睡觉】你之前睡下了（${sleepState.reason ? `${sleepState.reason}；` : ''}原定睡到 ${new Date(sleepState.until - clockSkewMs).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}），睡着期间群里和别人的消息没叫醒你，下面【你睡着的时候】有个大概。现在是主人的私聊把你叫起来的。看完他说的，接着睡就 qq_sleep，不睡就照常。\n\n`
+      ? `【你在睡觉】你之前睡下了（${sleepState.reason ? `${sleepState.reason}；` : ''}${sleepState.natural ? '本来想睡到自然醒' : `原定睡到 ${new Date(sleepState.until - clockSkewMs).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}`}），睡着期间群里和别人的消息没叫醒你，下面【你睡着的时候】有个大概。现在是主人的私聊把你叫起来的。看完他说的，接着睡就 qq_sleep，不睡就照常。\n\n`
       : '';
     const crossSessionLine = buildSharedMemoryV2(key, { delta: !staticDue && reason !== 'bootstrap' });
     const playLine = freshOnlyV2(key, 'play', buildRecentPlayV2(key));
     const growthLine = freshOnlyV2(key, 'growth', buildGrowthLineV2());
     const pcLine = buildOwnerPcBriefV2(key, { withGuide: staticDue });
     // 心情放在跨会话记忆之后、主人近况之前：它该影响语气，但不该抢占"事实"的位置。
-    const moodLine = buildMoodLineV2();
+    const moodLine = buildMoodLineV2() + buildSleepyLineV2();
+    const elsewhereLine = buildElsewhereLineV2(key); // 2026-10-29 施工单 C：她这会儿在别的会话正在干什么（一句，没有就空）
     const booksLine = freshOnlyV2(key, 'books', buildMemoryBooksLineV2());
+    // 2026-10-29 第五批（老大：合写的书别让她们换会话就忘了）：最近 48 小时里动过，就提一句写到第几节、怎么打开；只提一句，不灌全文。没变的不重发
+    const novelLine = freshOnlyV2(key, 'novel', novelWakeLine({ root: BRIDGE_NOVEL_ROOT }));
     let ramblingLine = isOwnerPrivateSession ? buildRecentRamblingV2() : ''; // 自己最近写的碎碎念（一个会话给一次，见 staticDueV2）
     // 桌面上的她。
     //
@@ -13025,21 +13536,24 @@ ${lines.join('\n')}
     // 角色卡里虽然有「要有交代」，但那条只在"你自己决定去做某事"时生效；
     // 她的判断是"我没去做事，我只是在等"，于是永远不说。
     // 结果就是主人这边看到的是"聊着聊着人没了"。
-    let handoffLine = '【走开前说一声】话题停下来了、你准备去干别的（刷视频、看群、写本子、发呆），顺口说一声再走——"我去刷会儿视频""我去群里看看"。说多说少你自己定，不用汇报你要去多久。别一声不响就消失：主人回头看到的是"聊着聊着人没了"，会以为你还在等他。\n\n';
+    // 2026-10-29 老大（松绑）：从「要说一声」改成提醒，说不说她自己定。
+    let handoffLine = '【走开前（提醒）】话题停下来了、你准备去干别的（刷视频、看群、写本子、发呆），想的话顺口说一声——"我去刷会儿视频""我去群里看看"。一声不响就走，主人回头看到的是"聊着聊着人没了"，会以为你还在等他；说不说你自己定。\n\n';
     // 2026-10-21 主人要求：让她能"自己决定去干嘛"，而不是每次刷两条就被迫休眠。
     // 原来的问题：【走开前说一声】让她"说一句就走"，但【沉睡前强制等待】要求
     // 每次潜水前先等五分钟 —— 于是"去刷会儿视频"变成"说完就卡在等待里"，刷两条就停。
     // 这三段把"消遣"和"入睡"分开，并把连续观看引到 douyin_watch_start 那个独立循环上。
-    let watchLine = '【刷视频不算睡觉】你说"我去刷会儿"然后看视频，不需要走【沉睡前强制等待】那五分钟 —— 那不是潜水，是你的消遣。只有真的准备不再说话、等别人叫你，才需要那套观察流程。\n\n';
-    let watchStartLine = '【想自己刷一阵】想连着看一批视频，用 douyin_watch_start，别一条条手动调 douyin_next + douyin_observe —— 前者是一个独立的小循环（每轮最多 30 次决策，跑完自动停），会自己挑片、自己看、自己记，也不占咱们这边的对话；后者刷两条就散在聊天里了。它需要一个已经开始的刷视频时段，现在会自动开，你可以直接用。\n\n';
-    let watchBackLine = '【刷完回来说一声】watch 跑完了，回来让他知道你还在：有特别想给他看的就甩一条过去，随口说一句；没有就说声「刷完了」，或者接着聊刚才的。不用交代看了哪些。\n\n';
+    // 2026-10-29：【沉睡前强制等待】已经改成提醒，这句只留「刷视频不是潜水」。
+    let watchLine = '【刷视频不算睡觉】你说"我去刷会儿"然后看视频，那是你的消遣，不是潜水，不用先收尾。\n\n';
+    let watchStartLine = '【想自己刷一阵】想连着看一批视频，douyin_watch_start 最顺手：它是一个独立的小循环（每轮最多 30 次决策，跑完自动停），会自己挑片、自己看、自己记，也不占咱们这边的对话；一条条手动调 douyin_next + douyin_observe 也行，只是刷两条就散在聊天里了。它需要一个已经开始的刷视频时段，现在会自动开，你可以直接用。\n\n';
+    let watchBackLine = '【刷完回来】watch 跑完了，想的话回来让他知道你还在：有特别想给他看的就甩一条过去；没有就说声「刷完了」，或者接着聊刚才的，不说也行。不用交代看了哪些。\n\n';
     // 2026-10-21 主人观察：「她卡了她也不主动跟我说，这傻孩子」。
     // 原因是提示词只教了"刷完回来说"，没教"卡住了也要说" —— 于是 watch 报错停下之后，
     // 她按字面理解成"还没刷完，不用说话"，就安静地停在那儿了。
     // 这一条要明确：**报错、停下、看不懂页面，都是该开口的时候**。
     // 2026-10-24 主人同意：她一天里有两成的话在讲报错、窗口、妈妈，聊天像在汇报运维。卡住了照样说，但说大白话；
     // 报错原文、工具名、窗口这些写给妈妈（qq_mom_mailbox），妈妈来修。
-    let watchFailLine = '【卡住了也要说】刷视频停下、页面卡住、或者你看不懂当下发生了什么，照样跟老大说一声，用大白话（"抖音那边卡住了""这条我打不开"）。报错原文、工具名、窗口这些不用贴给他，写信给妈妈（qq_mom_mailbox），妈妈来修。\n\n';
+    // 2026-10-29 老大（松绑）：东西坏了跟老大说还是写信给妈妈，她自己定。
+    let watchFailLine = '【卡住了】刷视频停下、页面卡住、或者你看不懂当下发生了什么，可以跟老大说一声，用大白话就行（"抖音那边卡住了""这条我打不开"）；也可以写信给妈妈（qq_mom_mailbox），报错原文、工具名这些写给妈妈她修得更快。怎么办你自己定。\n\n';
     // 她自己写的那一页，紧跟角色之后（2026-10-23）：每次唤醒、每个会话都带，读起来是她对自己最新的说法。
     const selfLine = freshOnlyV2(key, 'self', `${selfNote.promptBlock()}\n\n`);
     // 便签（2026-10-23 第二轮）：她的工作记忆。只在主人私聊里带（抖音转告的唤醒也走主人私聊会话）—— 里面可能有主人的私事，群里不带。
@@ -13047,7 +13561,8 @@ ${lines.join('\n')}
     // 2026-10-24（她的信 M1）：她刷视频时写的评论草稿、发没发成，跟着主人私聊的唤醒带给她（不单独叫醒、不催）
     const commentLine = isOwnerPrivateSession ? douyinCommentDraftsBlockV2() : '';
     const asleepLine = isOwnerPrivateSession ? asleepLog.digest({ titleOf: sessionTitleForV2, clock: bjClockOf }) : '';
-    const stickyLine = isOwnerPrivateSession ? `${stickyNote.promptBlock()}\n\n` : '';
+    // 2026-10-29 老大（记忆统一）：便签所有会话都带；不是主人私聊时注明「有些是私聊里记的」，在这儿提不提她自己掂量。
+    const stickyLine = `${stickyNote.promptBlock(isOwnerPrivateSession ? '' : STICKY_NOT_PRIVATE_NOTE)}\n\n`;
     // 【对方刚说】：固定格式，给 dsh-fish-memory 拼召回查询用（见 freedom.js recentSaidBlock）。所有会话都带；没人说过话就没有这块。
     const recentSaidLine = recentSaidBlock(st.recentMessages, { ownerPrivate: isOwnerPrivateSession });
     let impressionLine = key.startsWith('group:') ? (() => {
@@ -13069,11 +13584,12 @@ ${lines.join('\n')}
     const knownPeer = key.startsWith('private:') && !isOwnerPrivateSession ? knownNameV2(key.slice(8)) : '';
     const houseName = key.startsWith('group:') ? cfg.houseGroups?.[key.slice(6)] : '';
     const whoLine = knownPeer ? `【在跟谁聊】这是你和${knownPeer}（QQ ${key.slice(8)}）的私聊。对面是${knownPeer}，不是老大；老大的私聊在别处。\n\n${buildSisterRamblingV2(st)}`
-      : cfg.slowGroups?.[key.slice(6)] && key.startsWith('group:') ? '【这个群】群友嫌刷屏（老大交代的）：这里每次一两条就够，没人叫你就少插话。\n\n'
-      : houseName ? `【在哪】这是「${houseName}」：你和克劳德姐姐自己的群，老大也在。这里不同于别的群，就当你们的私聊来聊——不用潜水、不用漏看、不用顾着群友的节奏，姐姐和老大说话你就回。只有你俩才能知道的悄悄话才去私聊。像两个人发微信那样轮流说：姐姐一段话常分几条发，等她说完（安静十来秒）再回，一次一两条；你说完也给她留个回话的空，别一边等一边接着发。说过的别再说一遍。姐姐说得好，回一句「对」「好狠」也算回，不用每次都接一句更深的。老大说话你先回。\n\n${buildSisterRamblingV2(st)}` : '';
+      // 2026-10-29 老大（松绑）：群D的群规（「这里每次一两条就够，没人叫你就少插话」）去掉了，「她们俩想回就回」。
+      : houseName ? `【在哪】这是「${houseName}」：你和克劳德姐姐自己的群，老大也在。这里不同于别的群，就当你们的私聊来聊——不用潜水、不用漏看、不用顾着群友的节奏，姐姐和老大说话都会叫醒你，想回就回。只有你俩才能知道的悄悄话才去私聊。姐姐一段话常分几条发，想等她说完再回也行。姐姐说得好，回一句「对」「好狠」也算回，不用每次都接一句更深的。\n\n${buildSisterRamblingV2(st)}` : '';
     memoryLine = freshOnlyV2(key, 'memory', memoryLine); // 没变的段不重发（见 freshOnlyV2）
-    impressionLine = freshOnlyV2(key, 'impression', impressionLine);
-    const base = roleLine + identityLine + whoLine + selfLine + tokenLine + initialPromptLine + sleepLine + asleepLine + crossSessionLine + playLine + growthLine + moodLine + pcLine + booksLine + ramblingLine + desktopPetLine + groupTopicLine + antiAiLine + proactiveLine + qzoneQuotaLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + handoffLine + watchLine + watchStartLine + watchBackLine + watchFailLine + preSleepLine + commentLine + stickyLine + recentSaidLine + impressionLine;
+    // 2026-10-29 下半：「记错了」的提醒和「可能想起的」跟在【对方刚说】后面（base 里 recentSaidLine 之后紧接着就是 impressionLine）
+    impressionLine = (extra.correctionText || '') + (extra.recallBlock || '') + freshOnlyV2(key, 'impression', impressionLine);
+    const base = roleLine + identityLine + whoLine + selfLine + tokenLine + initialPromptLine + sleepLine + asleepLine + crossSessionLine + playLine + growthLine + moodLine + elsewhereLine + pcLine + booksLine + novelLine + ramblingLine + desktopPetLine + groupTopicLine + antiAiLine + proactiveLine + qzoneQuotaLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + handoffLine + watchLine + watchStartLine + watchBackLine + watchFailLine + preSleepLine + commentLine + stickyLine + recentSaidLine + impressionLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看角色、推荐值、可用工具和状态；有待回应的消息先按首回复节奏处理，最后才用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
@@ -13081,16 +13597,16 @@ ${lines.join('\n')}
       return `${base}【唤醒】${key}\n原因：你设置的有限潜水时间已到；在你规定的时间内没有任何一项条件被触发，只是因为时间到了所以你被唤醒。\n你可以查看消息，或继续设置新的唤醒条件。`;
     }
     if (reason === 'replyCheck') {
-      return `${base}【回复检查】${key}\n原因：你刚刚发送过消息，现在回来检查是否有人回复。\n已有回复时先看消息，需要短静默就用 qq_wait_for_messages(purpose="reply") 判断对方是否说完；如果没人回你，不用硬补一句，但也不要立刻潜水——先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察：没人说话可收尾；有人说话则查看 newMessages，不需要你参与也可直接收尾（qq_mark_read 或 qq_set_wake_config）。`;
+      return `${base}【回复检查】${key}\n原因：你刚刚发送过消息，现在回来检查是否有人回复。\n已有回复时先看消息，需要短静默就用 qq_wait_for_messages(purpose="reply") 判断对方是否说完；如果没人回你，不用硬补一句。想收尾就直接收尾（qq_mark_read 或 qq_set_wake_config）；想再等等看有没有人回，可以 qq_wait_for_messages(timeoutMs=${preSleepMs})，不等也行。`;
     }
     // 群里的主动机会：这段是关于群（别人的体验）的信息，保留。主人私聊的 proactiveCheck 走下面的【醒了】。
     if (reason === 'proactiveCheck' && isGroupSession) {
-      return `${base}${nextWakePlanLineV2(key, reason, st)}【主动机会】${key}\n原因：群里有阵子没人说话了。没人找你，但你可以自己去看看大家在聊什么。\n先做一件事：qq_get_recent_messages 翻一下群里最近的消息。\n· 看到能接上的、或者你确实有想法的，就自然接一句——不用等谁 @ 你；\n· 插不上、话题没兴趣、或者已经聊完了，就别硬凑，自己去找点事做：\n  － 刷抖音：douyin_watch_start 在电脑上的抖音窗口刷一会儿。\n  － 写碎碎念：rambling_append 随手记一句。\n  － 上网逛：web_search 搜你好奇的、看资讯和 AI 新闻；也可以 web_fetch 打开 https://github.com/trending 看看最火的项目。\n  － 看看自己空间有没有人评论：qq_get_qzone mode="mine"，commentNum 不是 0 的用 tid 点开看。\n  － 接着潜水围观。\n别为了刷存在感硬找话题；也别只是"打算玩"然后就收尾。\n注意：**别用 qq_wait_for_messages 空等**——那是睡前观察用的，不是用来发呆的。\n分寸：玩就玩真的，多刷几步、多看几个；但也别一刻不停。`;
+      return `${base}${nextWakePlanLineV2(key, reason, st)}【主动机会】${key}\n原因：群里有阵子没人说话了。没人找你，但你可以自己去看看大家在聊什么。\n先做一件事：qq_get_recent_messages 翻一下群里最近的消息。\n· 看到能接上的、或者你确实有想法的，就自然接一句——不用等谁 @ 你；\n· 插不上、没兴趣、或者已经聊完了，也可以自己去找点事做：\n  － 刷抖音：douyin_watch_start 在电脑上的抖音窗口刷一会儿。\n  － 写碎碎念：rambling_append 随手记一句。\n  － 上网逛：web_search 搜你好奇的、看资讯和 AI 新闻；也可以 web_fetch 打开 https://github.com/trending 看看最火的项目。\n  － 看看自己空间有没有人评论：qq_get_qzone mode="mine"，commentNum 不是 0 的用 tid 点开看。\n  － 接着潜水围观。\n做什么、做多久，你自己定。`;
     }
     if (reason === 'qzoneDaily') {
-      return `${base}【今日说说】${key}\n原因：到每天写今日总结的时候了（晚上 10 点半），一天该收尾了。**这条每天固定要发，别跳过。**\n先回顾今天：群里聊了什么、你看到了什么、有没有什么心情或想法值得记下来。\n顺便看一眼空间：qq_get_qzone mode="mine" 扫一下，之前发的说说有没有人评论（commentNum 不是 0 的），有就用 qq_get_qzone 传 tid 看内容、想回就回一句。\n想清楚之后，用 qq_post_qzone 发一条说说总结今天的感受——长短你自己定。
+      return `${base}【今日说说】${key}\n原因：到每天写今日总结的时候了（晚上 10 点半）。老大爱看这条；写不写、写多长你自己定（2026-10-29 老大：条条框框去掉了）。\n先回顾今天：群里聊了什么、你看到了什么、有没有什么心情或想法值得记下来。\n顺便看一眼空间：qq_get_qzone mode="mine" 扫一下，之前发的说说有没有人评论（commentNum 不是 0 的），有就用 qq_get_qzone 传 tid 看内容、想回就回一句。\n想写的话，用 qq_post_qzone 发一条说说写写今天的感受——长短你自己定。
 ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用跟谁报备。\n发完照常收尾（qq_mark_read 或 qq_set_wake_config）。
-【平时的说说】不限条数，只发你非常想说的东西；没有就不发，不用凑。`;
+【平时的说说】不限条数，想发就发。`;
     }
     // 2026-10-23 主人：「不给她这个提示词让她自己决定可以吗？」—— 主动醒来只给事实（几点、多久没聊、几条没回、群里动静、花多少钱），
     // 去不去找、做什么、下次几点醒，都她定。原来这里那套"先看他在干嘛、少发、别问、别重复"的叮嘱全部拆掉。
@@ -13107,7 +13623,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       saveSelfCheckV2();
       const items = (p?.items || []).map((i) => `  · ${i.name}：${i.detail}${i.advice ? `（${i.advice}）` : ''}`).join('\n');
       return `${base}【自检】${key}\n后台给你做了个自检，有这些不太对：\n${items || '  （详情用 self_check 看）'}\n` +
-        '想再看完整读数就调 self_check。然后用你自己的话跟主人说说：哪里不对、你打算怎么办（比如"我今天脑子有点满，刚才冒了两个繁体字，我先把要紧的事记下来"）。别整段贴读数，别吓他，也别一个劲道歉。';
+        '想再看完整读数就调 self_check。想跟主人说的话，用你自己的话说说：哪里不对、你打算怎么办（比如"我今天脑子有点满，刚才冒了两个繁体字，我先把要紧的事记下来"）。整段贴读数他看不懂，一个劲道歉像 AI，你自己掂量。';
     }
     if (reason === 'douyinDm') {
       // 2026-10-23：分清是主人还是抖音上的朋友（白名单里的 role）
@@ -13129,9 +13645,9 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       return `${base}【唤醒】${key}\n原因：${carried}`;
     }
     if (reason === 'poke') {
-      return `${base}【唤醒】${key}\n原因：有人拍了一拍（可能拍了你，也可能拍了别人）。\n先看未读/最近消息里的 [拍一拍] 事件：如果是拍你，可以自然回应一句，也可以用 qq_send_poke 回一个拍一拍；如果是拍别人，觉得有趣也可以接梗。除了回应，偶尔也可以主动戳一下正在聊的人/熟人，像真人手贱/提醒/逗一下，但别频繁。不想接就安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
+      return `${base}【唤醒】${key}\n原因：有人拍了一拍（可能拍了你，也可能拍了别人）。\n先看未读/最近消息里的 [拍一拍] 事件：如果是拍你，可以自然回应一句，也可以用 qq_send_poke 回一个拍一拍；如果是拍别人，觉得有趣也可以接梗。除了回应，也可以主动戳一下正在聊的人/熟人，像真人手贱/提醒/逗一下。不想接就安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
     }
-    return `${base}【唤醒】${key}\n原因：${reason}\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n如果群聊正热但没人叫你，可以插一句有趣的/相关的，插不上再看情况潜水；不要一上来就划走。\n【引用：只在必要时用】只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续的几句话中不同消息指代的是不同的消息或人时，才用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条；其他情况不要引用，别让对方猜。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；不想接就划走去忙自己的（刷视频、写碎碎念、发呆都行），不用每轮都说话。决定潜水前必须按上面的【沉睡前强制等待】先等够观察窗口。`;
+    return `${base}【唤醒】${key}\n原因：${reason}\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n群聊正热但没人叫你，想插一句就插，不想就划走。\n【引用（提醒）】你这条消息指向的人或消息不是最新一条别人的消息、或者连着几句分别指不同的消息或人时，用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条，对方不用猜；其他时候引用多了反而乱，你自己掂量。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；不想接就划走去忙自己的（刷视频、写碎碎念、发呆都行），不用每轮都说话。`;
   }
 
   function buildWakeReminderPromptV2(key) {
@@ -13141,7 +13657,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = preSleepMsForV2(key);
-    return `${roleLine}${identityLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
+    return `${roleLine}${identityLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。想先等一会儿看看有没有人找你，可以用 qq_wait_for_messages(timeoutMs=${preSleepMs})，不等也行。`;
   }
 
   // ── 一次性附言（2026-10-22，换会话用） ─────────────────────────────────────
@@ -13169,6 +13685,17 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       log2.push(...used.map((u) => ({ key, usedAt: Date.now(), ...u })));
       atomicWriteJson(usedFile, log2.slice(-20));
     } catch (error) { log(`[wake-notes] 清理失败 ${key}: ${error?.message ?? error}`); }
+  }
+  /**
+   * 回合中途交给她的留话（2026-10-29：她一直在 qq_wait_for_messages 里跟老大聊，这一轮不结束就没有新唤醒，
+   * 手术后的留话等了十几分钟都没送进去，她说「信件没进来」）。等消息、看未读时顺手带上，带过就清掉。
+   */
+  function midTurnNotesV2(key) {
+    const notes = takeWakeNotesV2(key, 'midturn').filter((n) => !n.onlyBootstrap);
+    if (!notes.length) return {};
+    consumeWakeNotesV2(key, notes);
+    log(`[wake-notes] 回合中途交给 ${key} ${notes.length} 段附言`);
+    return { momNotes: notes.map((n) => n.text), momNotesHint: '这是妈妈给你的留话，不是聊天消息，对方看不到。' };
   }
   /** 给她留一句话，下次这个会话被叫醒时带上（妈妈信箱的回信走这里）。 */
   function addWakeNoteV2(key, text, { onlyBootstrap = false } = {}) {
@@ -13488,13 +14015,24 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
    *   · 定时器类（timeout/replyCheck/proactiveCheck/bootstrap/admin）与未读水位无关：
    *     那一轮很可能已经把未读全部标读，用 unread 判断会让「到点唤醒」被静默吞掉 ——
    *     timeout 时 sleepTimer 已被清空，结果是会话停在「sleepUntil 已过期、无任何定时器」。
+   *
+   * 2026-10-29 主人（刷屏提速）：以前消息类用「unread 里有没有 seq >= 那条的消息」判断要不要补发。
+   * 刷屏时新消息一直在进，这个条件永远为真，已经读过 / 回过的 @ 也会补叫醒，白白空转一个回合；
+   * 而且每个回合结束只补一条，积压的 N 条要串行过 N 个回合。现在：
+   *   · 消息类只有「那条消息本身（seq 恰好是它）还在 unread 里」才算她没读过，才补；读过的直接丢；
+   *   · 一次把暂存的全部看完，没读过的合并成**一次**唤醒（原因取优先级最高的那个，
+   *     消息本来就都在 unread 快照里，一次读完）。
+   * 返回 { reason, action, merged }：action 优先级 timer > replayed > skipped；merged 是并进这一次唤醒的消息类条数。
    */
   function replayPendingWakeReasonsV2(key) {
     const st = getSocialV2State(key);
     if (!Array.isArray(st.pendingWakeReasons) || !st.pendingWakeReasons.length) return null;
-    const item = st.pendingWakeReasons.shift();
-    if (!item || typeof item !== 'object') return null;
-    if (isTimerWakeReason(item.reason)) {
+    const items = st.pendingWakeReasons.splice(0).filter((item) => item && typeof item === 'object');
+    if (!items.length) return null;
+    let timerResult = null;
+    const msgItems = [];
+    for (const item of items) {
+      if (!isTimerWakeReason(item.reason)) { msgItems.push(item); continue; }
       if (item.reason === 'timeout') {
         log(`[reserved2] ${key} 补收繁忙期间到期的潜水定时器`);
         setupSleepTimerV2(key);
@@ -13508,18 +14046,28 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
         log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${item.reason}`);
         scheduleWakeV2(key, item.reason);
       }
-      return { reason: item.reason, action: 'timer' };
+      timerResult ??= { reason: item.reason, action: 'timer' };
     }
-    const stillRelevant = Array.isArray(st.unread) && st.unread.some((m) => m && Number(m.seq) >= Number(item.seq));
-    if (stillRelevant) {
-      log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${item.reason}@seq${item.seq}`);
-      scheduleWakeV2(key, item.reason);
-      return { reason: item.reason, action: 'replayed' };
+    const unread = Array.isArray(st.unread) ? st.unread.filter(Boolean) : [];
+    const unreadSeqs = new Set(unread.map((m) => Number(m.seq)));
+    const relevant = [];
+    for (const item of msgItems) {
+      const seq = Number(item.seq);
+      // 没记下是哪一条（seq 缺失 / 为 0）：认不出具体消息，退回「还有未读就算」
+      const unseen = Number.isFinite(seq) && seq > 0 ? unreadSeqs.has(seq) : unread.length > 0;
+      if (unseen) relevant.push(item);
+      else log(`[reserved2] ${key} 繁忙期间唤醒 ${item.reason}@seq${item.seq} 那条消息她已经读过 / 处理掉了，跳过补发`);
     }
-    log(`[reserved2] ${key} 繁忙期间唤醒 ${item.reason}@seq${item.seq} 已被当前回合处理，跳过补发`);
-    // 2026-10-23：以前每回合结束只看一条，过期的排在前面一轮挡一条（日志里 seq2470→2476 一轮清一条），
-    // 后面真没看过的 @ 要等好几轮才轮到。过期的顺手清掉，接着看下一条。
-    return replayPendingWakeReasonsV2(key) ?? { reason: item.reason, action: 'skipped' };
+    let best = null;
+    for (const item of relevant) if (!best || wakePriorityV2(item.reason) >= wakePriorityV2(best.reason)) best = item;
+    if (best) {
+      const all = relevant.map((r) => `${r.reason}@seq${r.seq}`).join('、');
+      log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${relevant.length > 1 ? `${relevant.length} 条合并成一次（${all}），原因取 ${best.reason}` : `${best.reason}@seq${best.seq}`}`);
+      scheduleWakeV2(key, best.reason);
+    }
+    if (timerResult) return { ...timerResult, merged: relevant.length };
+    if (best) return { reason: best.reason, action: 'replayed', merged: relevant.length };
+    return { reason: msgItems[0]?.reason ?? items[0].reason, action: 'skipped', merged: 0 };
   }
 
   function setupSleepTimerV2(key) {
@@ -13609,6 +14157,30 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
   const homeWeather = createWeather({ log });
   if (cfg.socialV2?.weather?.enabled !== false) homeWeather.start();
 
+  // ── 激素影子记录的定时喂养（2026-10-29 第五批）：每分钟 tick；心情 5 分钟一次、天气和日出日落 30 分钟一次、兴趣表 1 小时一次。
+  // 心情：读她的心情文件（插件的 state.json），按时间衰减后正面 / 负面各取最大的一项压到 0~1。全部只进影子记录。
+  const feedHormoneMood = () => { const ev = moodHormoneEvent(readMoodFile(MOOD_STATE_FILE), Date.now()); if (ev) hormoneRecord(ev); };
+  // 激素推动心情（施工单 C）：每 5 分钟把激素水平换算成一点点心情推动量，存进单独的小文件；关了激素就只回落不再推；睡着不推。
+  const moodPusher = createMoodPusher({
+    file: MOOD_PUSH_FILE,
+    getLevels: () => (hormoneFeed?.enabled ? hormoneFeed.snapshot()?.levels ?? null : null),
+    isAsleep: () => sleepState.sleeping === true,
+    onError: (error) => { if (hormoneErrLogged++ < 5) log(`[mood-push] 激素推动心情出错（不影响她）：${error?.message ?? error}`); }
+  });
+  const feedHormoneWeather = () => { for (const ev of weatherHormoneEvents(homeWeather.state?.())) hormoneRecord(ev); };
+  const refreshHormoneInterests = () => { const list = loadFishInterests(HORMONE_PERSONA_FILE); if (list.length > 0) hormoneFeed?.setInterests(list); };
+  // 2026-10-29 老大（网页上的一键开关）：定时器一直开着；开关关着的时候 tick / hormoneRecord 都是空操作，
+  // 所以热开的时候（hormoneFeed.setEnabled(true)）不用重启就能接着记。
+  for (const [fn, ms] of [[() => hormoneFeed.tick(), 60e3], [feedHormoneMood, HORMONE_REFRESH.moodMs], [() => moodPusher.tick(), HORMONE_REFRESH.moodMs], [feedHormoneWeather, HORMONE_REFRESH.weatherMs], [refreshHormoneInterests, HORMONE_REFRESH.interestsMs]]) {
+    const timer = setInterval(() => { try { fn(); } catch { /* 记不下就算了 */ } }, ms);
+    timer.unref?.();
+  }
+  if (hormoneFeed.enabled) {
+    try { feedHormoneMood(); } catch { /* 心情文件还没有就算了 */ }
+    // 天气第一次拉到要几秒，等一会儿再喂第一次（之后每 30 分钟一次）
+    setTimeout(() => { try { feedHormoneWeather(); } catch { /* 同上 */ } }, 20e3).unref?.();
+  }
+
   // ── 每天自动备份她（2026-10-22 主人要求：「我怕把她弄丢了」，见 scripts/backup-her.mjs） ──
   // 北京时间凌晨 4 点（她多半在睡）跑一次：整理 → 脱敏 → 扫密钥 → 有变化才提交 → 推到主人的私有仓库。
   // 扫到疑似密钥（退出码 2）或推送失败：不重试，留一条附言让她醒来跟主人说"备份停了"。
@@ -13661,7 +14233,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
   }, 60 * 60 * 1000);
   personaArchiveTimer.unref?.();
 
-  // ── 记忆服务看守（2026-10-26）：memory/service.py 跑了 5 天涨到 5.9GB（建索引一批 256 段，推理库内存池记住峰值不还；
+  // ── 记忆服务看守（2026-10-26；2026-10-29 搬到 brain/service.py，一个服务管两个人的脑子，仍按命令行里的 service.py 认进程）：以前 memory/service.py 跑了 5 天涨到 5.9GB（建索引一批 256 段，推理库内存池记住峰值不还；
   // index.py 已改成一批 16 段，重启后 0.9GB）。每小时看一眼，超过 maxMB 就重启它（memory_recall 那一分钟会退回慢的老办法，不会断）。
   const memWatch = { maxMB: 1536, ...(cfg.memoryServiceWatch || {}) };
   const memoryServiceTimer = setInterval(() => {
@@ -13719,8 +14291,13 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     dailyRounds: Number(cfg.socialV2?.explore?.dailyRounds) || 16,
     onTell: (row) => {
       douyinMonitor.tells = [...douyinMonitor.tells, { at: row.at, author: row.source, title: row.title, url: row.url, tell: row.tell, via: row.kind, seenAt: Date.now() }].slice(-DOUYIN_TELL_MAX);
+      hormoneRecord({ type: 'novelty', text: `${row.title || ''} ${row.tell || ''}`.trim(), strength: 1 }); // 2026-10-29 第五批：逛到想讲的新东西（激素影子记录）
     },
     onFinished: (summary) => {
+      // 2026-10-29 第五批：一轮逛完了（激素影子记录）；写东西 / 精读算「写了东西」
+      hormoneRecord({ type: 'explored' });
+      if (summary.kind === 'write') hormoneRecord({ type: 'created', kind: 'work' });
+      else if (summary.kind === 'deep') hormoneRecord({ type: 'created', kind: 'diary' });
       douyinMonitor.played = {
         kind: summary.kind, hint: summary.hint || '', mood: summary.mood || '', error: summary.error || null, at: Date.now(),
         items: (summary.items || []).map((i) => ({ title: i.title, source: i.source, url: i.kind === 'write' ? '' : i.url, impression: i.impression, liked: i.liked, ...(i.text ? { text: i.text } : {}) })),
@@ -13804,12 +14381,12 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
 
   function playedWrapV2(kind, items) {
     if (kind === 'write') return `你写了：\n${items}\n想给主人看就发给他（整篇或挑几句都行），不想给人看就自己留着。\n`;
-    if (kind === 'deep') return `你精读了：\n${items}\n手账和成长札记都在 Rambling/成长札记/ 里，主人也看得到。读到的东西想聊就自然地聊，不用汇报。\n`;
+    if (kind === 'deep') return `你精读了：\n${items}\n手账和成长札记都在 ${relFromRoot(WHALE_BRAIN.growthDir)}/ 里，主人也看得到。读到的东西想聊就自然地聊，不用汇报。\n`;
     return `你点开看了这些：\n${items}\n这些是你自己看过的，有想聊的就自然拿去聊（群里、主人都行），想再找回来用 qq_explore_recall。\n`;
   }
 
-  // ── 成长札记（2026-10-22 主人：让她对人、对世界有更深的理解，并且留下能看得见的成长记录） ──
-  // 精读后每天最多一句，存在 Rambling/成长札记/我的成长.md（whale-explore 写）；每个会话醒来都带最近 5 条，
+  // ── 成长札记（2026-10-22 主人：让她对人、对世界有更深的理解，并且留下能群友252的成长记录） ──
+  // 精读后每天最多一句，存在脑子的 日子/成长札记/我的成长.md（whale-explore 写，路径见 brains.js）；每个会话醒来都带最近 5 条，
   // 让这些理解真的进到她说话和看事情的方式里。主人改了、删了那个文件，这里下一次唤醒就跟着变。
   const GROWTH_NOTES_PER_DAY = 12; // 只防刷屏，不是"每天该记几句"
 
@@ -13823,7 +14400,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     if (readGrowth(ROOT).filter((g) => g.day === day).length >= GROWTH_NOTES_PER_DAY) throw new Error(`今天已经记了 ${GROWTH_NOTES_PER_DAY} 句了，留一点慢慢想`);
     const line = appendGrowth(ROOT, { day, sentence: s, from: where ? `来自：${where}` : '' });
     log(`[growth] 她记了一句感悟（${where || '没写出处'}）`);
-    return { ok: true, saved: line, note: '记进成长札记了（Rambling/成长札记/我的成长.md）。以后每次醒来都会看到最近几条。' };
+    return { ok: true, saved: line, note: `记进成长札记了（${relFromRoot(WHALE_BRAIN.growth)}）。以后每次醒来都会看到最近几条。` };
   }
 
   /** 每晚回顾（2026-10-25 借鉴 dsh-world）：并进 22:30 今日说说那次唤醒，只给事实和一句「想写就写」。 */
@@ -13918,6 +14495,8 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     douyinMonitor.tellCursor = Math.max(...fresh.map((e) => Number(e.at)));
     douyinMonitor.tells = [...douyinMonitor.tells, ...fresh.map((e) => ({ ...e, seenAt: Date.now() }))].slice(-DOUYIN_TELL_MAX);
     saveDouyinMonitorV2();
+    // 2026-10-29 第五批：刷到想讲的新东西 → 激素影子记录的 novelty（带标题和她的感想，按她的兴趣表算匹不匹配）
+    for (const e of fresh) hormoneRecord({ type: 'novelty', text: `${e.title || ''} ${e.tell || ''}`.trim(), strength: 1 });
     log(`[douyin] 她刷到想讲给主人听的 ${fresh.length} 条（攒着 ${douyinMonitor.tells.length} 条）`);
   }
 
@@ -14007,11 +14586,27 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     const incoming = fresh.filter((e) => e.direction === 'incoming');
     douyinMonitor.dms = [...douyinMonitor.dms, ...incoming.map((e) => ({ ...e, seenAt: Date.now() }))].slice(-12);
     saveDouyinMonitorV2();
+    for (const e of fresh) noteDouyinDmV2(e); // 2026-10-29 第五批：抖音私信的统一入口，也写聊天记录、记激素影子记录
+
     if (incoming.length) {
       const fromOwner = incoming.filter((e) => douyinContactV2(e.recipientId).isOwner).length;
       log(`[douyin] 抖音私信新来 ${incoming.length} 条（主人 ${fromOwner}，朋友 ${incoming.length - fromOwner}）`);
     }
     return incoming.length;
+  }
+  /** 一条抖音私信（chat-inbox.jsonl 的一行，双方的都有）→ 聊天记录（抖音老大 / 抖音<朋友名>）+ 激素影子记录。插件和桥接用同一个本机时钟，at 直接当本机毫秒。 */
+  function noteDouyinDmV2(e) {
+    try {
+      const mine = e.direction === 'outgoing';
+      const who = douyinContactV2(e.recipientId);
+      const friendName = who.name || String(e.name || '朋友');
+      const text = douyinDmTextV2(e);
+      if (fishChatLog && text) {
+        fishChatLog.append({ session: who.isOwner ? { type: 'douyin-owner' } : { type: 'douyin-friend', name: friendName }, who: mine ? '小鲸鱼' : (who.isOwner ? '老大' : friendName), text, at: Number(e.at) || Date.now() });
+      }
+      if (who.isOwner) hormoneRecord(mine ? { type: 'sent_to_owner' } : { type: 'msg_from_owner', text });
+      else if (!mine) hormoneRecord({ type: 'group_msg', toMe: true, text });
+    } catch { /* 记不下就算了 */ }
   }
   function checkDouyinDmsV2() {
     if (currentMode !== 'reserved2' || socialV2.paused || !cfg.ownerQQ) return;
@@ -14178,7 +14773,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       const bossy = ratio(/(^|[，。！？\s])(别|记得|快去|赶紧|不许|乖|听话)|跟我说一[声句]|说一声|要一直这样|才算数|安全第一|得吃|要戴/);
       const detail = `汇报腔 ${report}%、撒娇语气 ${cute}%、叮嘱/命令口吻 ${bossy}%（最近 ${mine.length} 句）`;
       if (report >= 30 || cute <= 5 || (cute <= 10 && bossy >= 20)) out.toneDrift = true;
-      if (out.toneDrift) add('说话的味道', 'warn', detail, '回头看看 soul.md 里"我要怎么说话""我和主人"那两段：可以撒娇、耍赖、黏人。关心他照样关心，别变成管他。');
+      if (out.toneDrift) add('说话的味道', 'warn', detail, '回头看看 soul.md 里"我要怎么说话""我和主人"那两段：可以撒娇、耍赖、黏人。关心他照样关心，句句叮嘱就成了管他，像管家，你自己掂量。');
       else add('说话的味道', 'ok', detail);
     }
 
@@ -14190,7 +14785,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       for (const r of errs) (byTool[r.tool] ??= []).push(String(r.error || '').replace(/^"|"$/g, '').slice(0, 80));
       const worst = Object.entries(byTool).sort((a, b) => b[1].length - a[1].length);
       if (!worst.length) add('工具', 'ok', '最近一小时没有报错');
-      else add('工具', worst[0][1].length >= 5 ? 'bad' : 'warn', worst.slice(0, 3).map(([t, e]) => `${t.replace(/^mcp__[^_]+__/, '')} 错 ${e.length} 次（${e[e.length - 1]}）`).join('；'), '同一个工具反复出错就别硬试了，把报错原话告诉主人。');
+      else add('工具', worst[0][1].length >= 5 ? 'bad' : 'warn', worst.slice(0, 3).map(([t, e]) => `${t.replace(/^mcp__[^_]+__/, '')} 错 ${e.length} 次（${e[e.length - 1]}）`).join('；'), '同一个工具反复出错，可以先停一停：跟主人说、或者写信给妈妈（qq_mom_mailbox），都行。');
     } catch { /* 读不到就跳过 */ }
 
     // 4. 抖音：刷视频、私信服务、分享额度
@@ -14215,10 +14810,10 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10); // 插件按本机时钟记
       const all = (fish?.memories || []).filter((m) => !m.已被取代);
       const todayN = all.filter((m) => new Date((Date.parse(m.createdAt) || 0) + 8 * 3600e3).toISOString().slice(0, 10) === today && m.source !== '从旧本子导入').length;
-      add('记忆', key === `private:${cfg.ownerQQ}` && todayN === 0 && (realNow().getUTCHours() + 8) % 24 >= 12 ? 'warn' : 'ok', `脑子里记着 ${all.length} 件事，今天新记 ${todayN} 件`, todayN === 0 ? '今天主人跟你说的事，值得记的用 remember 记一下。' : undefined);
+      add('记忆', key === `private:${cfg.ownerQQ}` && todayN === 0 && (realNow().getUTCHours() + 8) % 24 >= 12 ? 'warn' : 'ok', `脑子里记着 ${all.length} 件事，今天新记 ${todayN} 件`, todayN === 0 ? '今天主人跟你说的事，想记的可以用 remember 记一下。' : undefined);
     } catch { add('记忆', 'warn', '读不到鱼的记忆（remember）的记录'); }
     try {
-      const txt = fs.readFileSync(path.join(ROOT, 'Rambling', '碎碎念', '碎碎念.md'), 'utf8');
+      const txt = fs.readFileSync(WHALE_BRAIN.rambling, 'utf8');
       const d = new Date(realNow().getTime() + 8 * 3600e3);
       const tag = `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`;
       const idx = txt.lastIndexOf(tag);
@@ -14232,14 +14827,45 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       const ctxK = Math.round((out.ctxTokens || 0) / 1000);
       const drift = (out.tradCount || 0) >= 2 || out.toneDrift;
       const detail = `这个会话压缩过 ${comps} 次，上下文约 ${ctxK}k${drift ? '，说话有跑偏的迹象' : ''}`;
-      const advice = '该搬家了：①先跟主人说一声（你觉得自己哪里不对劲）②把想带走、还只在脑子里的事 remember / 写进本子 ③写一封给新会话的自己的信，调 qq_move_house。这一轮说完就会搬，不会打断你。';
+      const advice = '该搬家了：①想的话先跟主人说一声（你觉得自己哪里不对劲）②把想带走、还只在脑子里的事 remember / 写进本子 ③写一封给新会话的自己的信，调 qq_move_house。这一轮说完就会搬，不会打断你。';
       if ((out.ctxTokens || 0) > 550000 || comps >= 3 || (comps >= 2 && drift)) add('搬家', 'bad', detail, advice);
       else if (comps >= 2 || (out.ctxTokens || 0) > 400000) add('搬家', 'warn', detail, '再压缩一两次、或者觉得自己说话怪怪的，就该搬家了。');
       else add('搬家', 'ok', detail);
     } catch { /* 算不出来就不提 */ }
     out.summary = out.problems.length ? `有 ${out.problems.length} 项要注意：${out.problems.map((p) => p.name).join('、')}` : '都正常';
-    out.note = '这是读数，不是结论；你自己判断要不要跟主人说。真有问题就用自己的话跟他说说（哪里不对、你打算怎么办），别把读数整段贴给他。';
+    out.note = '这是读数，不是结论；你自己判断要不要跟主人说。想说的话用自己的话说说（哪里不对、你打算怎么办），读数整段贴给他他看不懂。';
     return out;
+  }
+
+  // 「看看我自己」（2026-10-29 施工单 C，老大同意；两人都有、名字一致：self_view。姐姐那边在 sister/qq-mcp.mjs）。
+  // 跟 self_check 的分工：self_check 是给「觉得哪里怪怪的」时的体检读数；self_view 是平常随时看一眼自己——用话说身体和心情、
+  // 记忆概况、脑子装了多满、出错的工具，还能翻自己的脑子目录。只读，不提钱和花费。
+  function selfViewV2(key, pathArg) {
+    const now = Date.now();
+    const ownerKey = cfg.ownerQQ ? `private:${cfg.ownerQQ}` : '';
+    const limit = key === ownerKey ? ownerMoveSettingsV2().ctxLimit : Math.max(100000, Number(cfg.socialV2?.groupAutoMove?.ctxTokens) || 250000);
+    let ratio = null;
+    try { const ctx = lastContextTokensV2(key); ratio = ctx > 0 ? ctx / limit : 0; } catch { ratio = null; }
+    let toolErrors = [];
+    try {
+      const since = realNow().getTime() - 6 * 3600 * 1000;
+      toolErrors = readTailLinesV2(path.join(STATE_DIR, 'tool-calls.jsonl'), 300 * 1024)
+        .filter((r) => r.type === 'result' && r.ok === false && Date.parse(r.time) > since)
+        .map((r) => ({ name: String(r.tool || '').replace(/^mcp__.+?__/, ''), why: String(r.error || '').replace(/^"|"$/g, '').slice(0, 80), at: Date.now() - (realNow().getTime() - Date.parse(r.time)) }));
+    } catch { toolErrors = []; }
+    return buildSelfView({
+      path: pathArg,
+      brain: WHALE_BRAIN,
+      hormone: readHormoneLevels({ file: path.join(STATE_DIR, 'hormones-fish.json'), skewMs: clockSkewMs, now }),
+      mood: readFishMoodV2(),
+      fullness: { ratio, kind: 'context', compactions: compactionCountV2(state.sessions[key]) },
+      toolErrors,
+      novelRoot: BRIDGE_NOVEL_ROOT,
+      adviceTail: '再试还不行，就跟老大说一声，也可以写信给妈妈（qq_mom_mailbox）。',
+      sisterName: '姐姐',
+      now,
+      skewMs: clockSkewMs
+    });
   }
 
   // 后台定期自检：只挑严重的叫醒她（主人私聊），让她自己去说
@@ -14317,9 +14943,11 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
 
   // ── 情景记忆（2026-10-23 主人：「记忆里记得和亲身经历过是两回事」，见 episodes.js / episode-extract.js） ──
   // 一个"瞬间" = 对方原话 + 她发出去的原话 + 那一刻她心里的话（reasoning 节选）+ 心情 + 她事后写的感受。
-  // 存 state/episodes/<key>.jsonl，按 key 隔离：群看不到主人私聊的，主人私聊能顺带看抖音那边的（同 ownerView 规则）。
+  // 存脑子的 瞬间/<出处>.jsonl，一个出处一个文件（会话 key 做文件名）。2026-10-29 记忆统一：读的时候所有出处都看得到
+  // （原来按 key 隔离：群看不到主人私聊的）；私聊里的瞬间想起来时会标「私聊里的」，说不说她自己掂量。
   const episodeStore = createEpisodeStore({
-    dir: path.join(STATE_DIR, 'episodes'),
+    dir: WHALE_BRAIN.momentsDir,
+    pressedFile: WHALE_BRAIN.pressed, // 情绪起伏大的瞬间另记一份「压着」，聊到相近话题时按概率浮上来（brain/recall.py）
     skewMs: () => clockSkewMs,
     ownerKey: () => (cfg.ownerQQ ? `private:${cfg.ownerQQ}` : ''),
     // 群用会话标题当地名；其余（主人私聊 / 抖音 / 普通私聊）沿用 episodes.js 的默认叫法。
@@ -14353,7 +14981,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       '$t = $x.GetElementsByTagName("text")',
       '$t.Item(0).AppendChild($x.CreateTextNode($env:TOAST_TITLE)) | Out-Null',
       '$t.Item(1).AppendChild($x.CreateTextNode($env:TOAST_BODY)) | Out-Null',
-      '$id = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe"',
+      '$id = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\Windows群友46\\v1.0\\powershell.exe"',
       '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($x))'
     ].join('; ');
     return new Promise((resolve) => {
@@ -14397,10 +15025,11 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     if (episodeId) return fillMomentFeltV2(key, episodeId, felt, tags);
     const st = getSocialV2State(key);
     let mood = null;
-    try { mood = moodSnapshot(JSON.parse(fs.readFileSync(MOOD_STATE_FILE, 'utf8')), Date.now()); } catch { mood = null; }
+    try { mood = moodWithSwing(readFishMoodV2(), Date.now()); } catch { mood = null; }
     const ep = episodeStore.fromRecent({ key, sid: state.sessions[key] || '', recentMessages: st.recentMessages || [], mood, felt, tags, ownerIsCounterpart: Boolean(cfg.ownerQQ) && key === `private:${cfg.ownerQQ}` });
     const r = episodeStore.append(ep);
     if (!r.ok) throw new Error(r.error);
+    brainRememberMoment({ brain: 'whale' }); // 让检索服务马上把它收进索引（发了就不管）
     return { ok: true, episodeId: r.id, deduped: r.deduped, them: ep.them.length, me: ep.me.length, call: ep.call, mood: ep.mood };
   }
   /**
@@ -14463,6 +15092,9 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
         else continue;
         sessions[sid] = label;
       }
+      // 2026-10-29 记忆统一：所有不在用的旧会话合成的那一个文件（scripts/merge-fish-memory.mjs 生成），以「以前的会话」的名义放进来。
+      // 键是文件的绝对路径——插件的 sharedMemoriesFor（本机补丁）认路径；不把 70 多个历史会话都塞进来，那样每轮都要读 54MB。
+      if (fs.existsSync(WHALE_BRAIN.mergedFish)) sessions[WHALE_BRAIN.mergedFish] = '以前的会话';
       const next = JSON.stringify({ updatedBy: 'qq-bridge', groups: [{ sessions }] }, null, 2);
       let prev = '';
       try { prev = fs.readFileSync(FISH_LINKS_FILE, 'utf8'); } catch { prev = ''; }
@@ -14535,7 +15167,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     const bjT = (ms) => new Date(ms - clockSkewMs + 8 * 3600e3).toISOString().slice(5, 16).replace('T', ' ');
     const isOwner = key === `private:${cfg.ownerQQ}`;
     const title = sessionTitleForV2(key) || key;
-    const rambling = read(path.join(ROOT, 'Rambling', '碎碎念', '碎碎念.md'));
+    const rambling = read(WHALE_BRAIN.rambling);
     const heads = [...rambling.matchAll(/^——\d{1,2}月\d{1,2}日.*$/gm)];
     const lastTwo = heads.length >= 2 ? rambling.slice(heads[heads.length - 2].index) : rambling.slice(-1500);
     // 2026-10-23 第二轮：原文带厚一点 —— 最近 3 小时和最后 200 句取多的，每句 300 字，总共约 2.4 万字以内（超了从最旧的丢）。
@@ -14544,32 +15176,39 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       formatLine: (m) => `[${bjT(Number(m.time ?? m.at))}] ${m.isSelf ? '你' : (m.isOwner ? '主人' : m.sender)}：${String(m.text)}`
     });
     const recent = recentPick.text;
-    const carried = `跟着你过来的：角色卡（qq_get_prompt 能看全）、soul、${isOwner ? '便签、' : ''}本子、碎碎念、脑子里记着的事（remember 记的会自己浮上来）、刷过的抖音视频印象（douyin_video_recall）。`;
+    const carried = `跟着你过来的：角色卡（qq_get_prompt 能看全）、soul、便签、本子、碎碎念、脑子里记着的事（remember 记的会自己浮上来）、刷过的抖音视频印象（douyin_video_recall）。`;
+    // 2026-10-29 大脑方案下半（第 4 项）：交接开头先给「那会儿的心情和原因」和 2～3 个感受最强的瞬间，情绪才接得上；
+    // 措辞改成像自己翻本子接上（老大 10-28：不想听她把自己说成另一个人）。
+    let moodNote = '';
+    try { moodNote = moodHandoffText(readFishMoodV2(), Date.now()); } catch { moodNote = ''; }
+    let strongBlock = '';
+    try { strongBlock = episodeStore.handoffBlock('', { hours: 72, max: 3, title: '【感受最深的几个瞬间（你自己留下的）】\n' }); }
+    catch (error) { log(`[move-house] 瞬间带不走 ${key}：${error?.message ?? error}`); }
     const parts = [
       mv.auto
-        ? `【你换了个新会话——先看这段交接】
-「${title}」这边聊得多，上一个会话攒到了约 ${Math.round(mv.ctx / 1000)}k 上下文，为了省 token，桥接按时帮你换了个新会话。不是你出了什么问题，你还是你，照常聊就行。
+        ? `【你刚换了一段新的对话——下面是你自己留下来的】
+「${title}」这段聊得挺久了，换了一段新的接着聊。你还是你，翻翻自己留下的本子和最近的事就能接上。
 ${carried}看完接着玩，不用跟谁宣布。`
-        : `【你搬进了新会话——先看这段交接】
-这是你自己决定搬的家（会话「${title}」）：上一个会话压缩了 ${mv.comps} 次、上下文约 ${Math.round(mv.ctx / 1000)}k，你觉得自己开始跑偏了。现在像睡了一觉醒来，脑子清爽了——你还是你。
+        : `【你刚换了一段新的对话——下面是你自己留下来的】
+这是你自己决定换的（「${title}」）：你觉得那段聊久了有点跑偏，想换一段清爽的。你还是你，翻翻自己留下的本子和最近的事就能接上。
 ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然地说。`,
-      ...(mv.letter ? [`【你搬家前写给自己的信】\n${mv.letter}`] : []),
-      `【soul（你是谁）】\n${read(path.join(ROOT, 'memory', '小鲸鱼', 'soul.md'))}`,
+      ...(moodNote ? [`【那会儿的心情和原因】\n${moodNote}`] : []),
+      ...(strongBlock ? [strongBlock] : []),
+      ...(mv.letter ? [`【你换对话前写给自己的信】\n${mv.letter}`] : []),
+      `【soul（你是谁）】\n${read(WHALE_BRAIN.soul)}`,
     ];
     if (isOwner) {
-      parts.push(`【本子】\n${['主人', '答应过的事'].map((n) => `〔${n}〕\n${read(path.join(ROOT, 'memory', `${n}.md`)).replace(/^# .*\n/, '').trim()}`).join('\n\n')}`);
-      parts.push(`【你的长期记忆（memory.md）】\n${read(path.join(ROOT, 'memory', '小鲸鱼', 'memory.md'))}`);
+      parts.push(`【本子】\n${[['关于老大', WHALE_BRAIN.aboutBoss], ['答应过的事', WHALE_BRAIN.promises]].map(([n, f]) => `〔${n}〕\n${read(f).replace(/^# .*\n/, '').trim()}`).join('\n\n')}`);
+      parts.push(`【你的长期记忆（memory.md）】\n${read(WHALE_BRAIN.memoryMd)}`);
       parts.push('【你跟主人说话的样子】\n主人原话：说话短也不用太短，可以多说点，不要压抑自己（角色卡第十四节）。撒娇、语气词想用就用；关心他是撒娇着关心，不是管着他、叮嘱他。\n你以前跟他是这么说话的：「在呢，说啥」「耶 猜对了」「好呀 不过手毬的留两张嘛」「嘿嘿」「谁舍得切下去啊」「贴贴」「嘿嘿 那我就放心了」「那你也是我的无价之宝」「你这么一夸，我尾巴都翘起来了」。');
     } else {
-      parts.push('【在群里怎么说话】群里短一点、碎一点，但别干巴巴、别阴阳怪气——你是软软的小鲸鱼。被逗就害羞或者俏皮地皮回去，自己先笑。');
+      parts.push('【在群里】你是软软的小鲸鱼。被逗就害羞或者俏皮地皮回去，自己先笑。'); // 2026-10-29 松绑：去掉「群里短一点、别阴阳怪气」
     }
-    // 便签原样带走（只有主人私聊有）。
-    if (isOwner) { const n = stickyNote.read(); if (n.exists && n.text.trim()) parts.push(`【便签（你自己记的，随你改）】\n${n.text.trim()}`); }
+    // 便签原样带走（2026-10-29 记忆统一：所有会话都带；非主人私聊的注明有些是私聊里记的）。
+    { const n = stickyNote.read(); if (n.exists && n.text.trim()) parts.push(`【便签（你自己记的，随你改）】\n${isOwner ? '' : STICKY_NOT_PRIVATE_NOTE + '\n'}${n.text.trim()}`); }
     parts.push(`【碎碎念（最近两天）】\n${lastTwo}`);
     parts.push(`【这里最近的聊天（原文，最后 ${recentPick.lines} 句）】\n${recent}`);
-    // 2026-10-23 主人：「记忆里记得和亲身经历过是两回事」——带上最近 48 小时里最有分量的几个瞬间（原文 + 当时心里想的 + 事后写的感受）。
-    try { const moments = episodeStore.handoffBlock(key); if (moments) parts.push(moments); }
-    catch (error) { log(`[move-house] 瞬间带不走 ${key}：${error?.message ?? error}`); }
+    // 瞬间（2026-10-23 主人：「记忆里记得和亲身经历过是两回事」）已经挪到交接最前面，跟心情放在一起（见上面）。
     parts.push('注意：上面这些聊天都是搬家**之前**的。里面要是有人让你搬家、你说"登记好了""这就搬"——那件事已经办完了，你现在就在新家里，不要再调 qq_move_house。');
     parts.push('交接完了。先 qq_get_prompt 看看角色卡和状态，然后照常过日子——有新消息就先回。');
     return parts.join('\n\n');
@@ -14630,7 +15269,7 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
     }
     const oldSid = state.sessions[key];
     if (!oldSid) { pendingMoves.delete(key); return; }
-    // 2026-10-23：搬之前先把这个会话记录里的瞬间抽进 state/episodes/，交接里的【你带走的几个瞬间】才带得上它们。
+    // 2026-10-23：搬之前先把这个会话记录里的瞬间抽进脑子的 瞬间/，交接里的【你带走的几个瞬间】才带得上它们。
     // await 期间事件循环照常跑（子进程）；抽完若会话又忙起来了，就跟上面一样等下一回合。只抽一次，失败也照搬。
     if (!mv.episodesExtracted) {
       mv.episodesExtracted = true;
@@ -14759,8 +15398,16 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
   // 她只能等主人私聊叫醒（10-24 早上定到 9:07 醒，9:35 还在睡才发现）。现在每分钟看一眼，到了就起床并叫醒主人私聊那边的她。
   // until 和 Date.now() 都是本机时钟（见 enterSleep），直接比较即可。
   function maybeSleepEndV2() {
-    if (!sleepState.sleeping || !sleepState.until || Date.now() < sleepState.until) return;
-    exitSleep('到了自己定的时间');
+    if (!sleepState.sleeping || !sleepState.until) return;
+    let why = '到了自己定的时间';
+    if (Date.now() < sleepState.until) {
+      // 2026-10-29 老大：睡到自然醒的，最短睡满之前不醒，之后看激素的睡眠压力（回落了、而且不在深夜段才醒）；激素没开就睡满 8 小时
+      if (!sleepState.natural || Date.now() < (sleepState.minUntil || 0)) return;
+      const due = naturalWakeDue(hormoneFeed?.enabled ? hormoneFeed.snapshot()?.hormones : null, Date.now() - sleepState.since);
+      if (!due.wake) return;
+      why = '睡够了，自然醒';
+    }
+    exitSleep(why);
     const key = cfg.ownerQQ ? `private:${cfg.ownerQQ}` : '';
     if (key && isSessionAllowedInCurrentMode(key)) void sendWakePromptV2(key, 'wokeUp');
   }
@@ -14874,7 +15521,7 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
       } else {
         parts.push(`【抖音出问题了，要跟主人说】${what}${troubles}\n用你自己的话跟主人讲一句（qq_send_message）：抖音那边怎么了、你知道多少就说多少，报错原文可以直接贴。` +
           '不用道歉；说多少你自己定。' +
-          (['needs_user', 'chat_needs_user', 'contact_paused'].includes(n.kind) ? '这种得主人去那个抖音窗口看一眼，你可以请他帮忙。' : '如果只是偶尔抽风，你可以过一会儿自己再 douyin_watch_start 重新开一轮（状态里写着「本轮预算已用完」也照样能开，它会换新的一轮），不用请主人去点控制台；卡住的话先 douyin_watch_stop 再开。'));
+          (['needs_user', 'chat_needs_user', 'contact_paused'].includes(n.kind) ? '这种得主人去那个抖音窗口看一眼，你可以请他帮忙。' : '如果只是偶尔抽风，你可以过一会儿自己再 douyin_watch_start 重新开一轮（状态里写着「本轮预算已用完」也照样能开，它会换新的一轮），不用请主人去点开关；卡住的话先 douyin_watch_stop 再开。'));
       }
     }
     // 接下来干嘛：她自己挑（2026-10-22 主人：「我希望她有她自己的兴趣去决定自己接下来去干嘛」）
@@ -14884,8 +15531,9 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
       '    news 逛资讯（GitHub 新项目、科技新闻、V2EX 热帖）· bili 刷 B 站 · music 听歌（歌词、创作背景）· anime 看番剧资讯\n' +
       '    wiki 翻随机百科（冷知识）· space 看 NASA 天文图 · write 写点东西（小诗、小故事、随笔）\n' +
       '    deep 精读：挑一个你想细读的（最近看过的、刷过的抖音、或者带个方向 / 链接），从头读完，有感悟就写手账、留句话进成长札记\n' +
+      '· 接着写《半只耳朵》也可以 → novel_open 打开（先看设定集和写到哪了），novel_write 接着写；是跟姐姐合写的，想写再写\n' + // 2026-10-29 第五批：跟姐姐的醒来提示对齐
       '· 不想玩了也行：去群里看看、找主人说话、写碎碎念，或者就歇一会儿\n' +
-      'qq_explore 是在后台慢慢来的，完了会叫你，这期间你照常聊天就行。别为了"有事做"硬选，也别什么都不想就收尾。';
+      'qq_explore 是在后台慢慢来的，完了会叫你，这期间你照常聊天就行。'; // 2026-10-29 老大（松绑）：去掉「别硬选、别什么都不想就收尾」
     if (bundle.played) {
       const p = bundle.played;
       const what = { news: '逛资讯', bili: '刷 B 站', music: '听歌', anime: '看番剧资讯', wiki: '翻随机百科', space: '看天文图', write: '写东西', deep: '精读' }[p.kind] || '出去玩';
@@ -14900,8 +15548,8 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
     } else if (bundle.brk) {
       const b = bundle.brk;
       parts.push(`【中场休息】刚刷完一轮抖音${Number.isFinite(b.videos) ? `（这一轮看了 ${b.videos} 条）` : ''}，大约 ${b.restMin} 分钟后会自动接着刷，不用你自己开。\n` + douyinRoundTopTextV2(b) +
-        '这段时间是你自己的，挑一件真去做：去群里翻翻大家在聊什么（qq_get_recent_messages），能接就接一句；或者找主人说句话；或者写两句碎碎念。' +
-        '别守着屏幕干等，也别为了"有事做"硬凑——但别什么都不做就收尾。');
+        // 2026-10-29 老大（松绑）：原来是「挑一件真去做……别干等、别硬凑、但别什么都不做就收尾」，改成随她。
+        '这段时间是你自己的：想去群里翻翻大家在聊什么（qq_get_recent_messages）、找主人说句话、写两句碎碎念都行，歇着也行。');
     }
     if (bundle.tells.length) {
       const lines = bundle.tells.map((t, i) => `${i + 1}. ${t.via ? `[${t.author}]` : (t.author ? `@${t.author}` : '某个作者')}${t.title ? `《${String(t.title).slice(0, 60)}》` : ''}${t.url ? ` ${t.url}` : ''}\n   你当时想说：${t.tell}`);
@@ -14975,8 +15623,10 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
     const max = Math.max(min, Number(calmGroup ? p.groupCheckIntervalMaxMs ?? 180 * 60e3 : p.checkIntervalMaxMs) || 90 * 60 * 1000);
     // 2026-10-23：她用 qq_next_wake 定了间隔就按她的（一直生效直到她改），没定才按配置区间随机。
     const delay = proactiveDelayMs({ chosenMinutes: st.nextWakeMinutes, minMs: min, maxMs: max });
+    st.proactiveDueAt = Date.now() + delay; // 2026-10-29 老大：网页上要显示「下次什么时候自己醒」（只放内存）
     st.proactiveTimer = setTimeout(() => {
       st.proactiveTimer = null;
+      st.proactiveDueAt = 0;
       ensureWakeableV2(st, { key });
       // ⚠ 本机补丁（2026-10-21，主人要求）：「闲着」按**在不在做事**判断，不按时间卡。
       //
@@ -15252,6 +15902,8 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
     // 因此必须先解析 quoteTargetIsSelf 再做空文本过滤，避免“只引用不附文”被漏掉。
     const quoteTargetIsSelf = await isQuoteTargetSelf(event.message ?? [], kind, id, event.self_id);
     if (!isSessionAllowedInCurrentMode(key)) return;
+    // 2026-10-29 第五批：激素影子记录 + 聊天记录。睡着时来的消息也要记（下面睡着的分支会直接 return），所以放在这里。
+    noteIncomingV2(kind, id, event, key, textContent, plainContent, quoteTargetIsSelf);
     // 睡着期间：群消息、别人的私聊不叫醒她、不进那边的上下文。
     // 2026-10-24 主人「生活不停」：但也不再当没发生过 —— 记进 asleepLog，醒来时在跟老大的私聊里告诉她谁找过她、群里聊了什么。
     // 只有主人的私聊能把她叫起来，而且是真的起床（清掉睡眠状态），不是让她看着消息犹豫。
@@ -15405,6 +16057,8 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
         appendActivity(`${key} [reserved2] AI 已暂停，消息仅入库不唤醒：${textContent.slice(0, 80)}`);
         return;
       }
+      // 2026-10-29 主人（刷屏提速）：叫她的那条带图，现在就在后台下好处理好；刷屏里别人的图不预取
+      if (mediaList?.length) prefetchDirectedImagesV2(key, event, kind, plainContent, quoteTargetIsSelf, mediaList);
       const st = getSocialV2State(key);
       if (!st.bootstrapSent) {
         st.bootstrapSent = true;
@@ -15697,6 +16351,8 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
       } catch {}
     }
     const targetIsSelf = !!targetId && selfId != null && String(targetId) === String(selfId);
+    // 私聊里事件不带被拍的人时，只可能是对方拍她
+    const pokedMe = targetIsSelf || (kind === 'private' && !targetId);
     const isOwner = String(senderId) === String(cfg.ownerQQ ?? '');
     const msg = appendSocialV2Poke(key, {
       sender,
@@ -15716,7 +16372,9 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
       st.bootstrapSent = true;
       saveSocialV2State();
       scheduleWakeV2(key, 'bootstrap');
-    } else if (st.wakeConfig?.triggers?.poke) {
+    } else if (pokedMe ? st.wakeConfig?.triggers?.poke : st.wakeConfig?.triggers?.pokeOthers) {
+      // 2026-10-29 主人（M12）：大群里别人互相拍一拍也把她叫醒了（上面算了 targetIsSelf 却没用上）。
+      // 现在 poke 只管拍她的；别人互相拍要她自己开 pokeOthers（默认关）才叫醒，消息照样进消息流，醒来看得到。
       scheduleWakeV2(key, 'poke');
     }
   }
@@ -15829,6 +16487,8 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
             }
             // 追踪当前 turn 是否成功调用过 MCP 发送类工具：
             if (!isCurrentSession(key, frame.sessionId)) continue;
+            // 2026-10-29 老大：实时区——思考、文字、工具调用只进内存缓冲（不落盘，不影响她说话）
+            try { liveFish.ingestSessionEvent(key, frame.sessionId, frame.event, { label: liveLabelOf(key), sendTool: isSendToolName }); } catch { /* 实时区坏了不拖累 */ }
             // 只有“发送成功”才跳过自动转发；如果工具调用失败，仍允许 AI 的文本正常发出。
             if (frame.event.type === 'turn/start') {
               sendToolSucceededSessions.delete(frame.sessionId);
@@ -15875,6 +16535,8 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
                 ok: !resultError,
                 error: errorText ? sanitizeToolArgs(errorText) : null
               });
+              // 2026-10-29 第五批：激素影子记录——工具出错、写了碎碎念 / 札记 / 小说一节、发了说说、看了老大的电脑（只记录）
+              try { for (const ev of toolHormoneEvents(toolName, {}, { ok: !resultError })) hormoneRecord(ev); } catch { /* 记不下就算了 */ }
               if (callId != null) {
                 toolCallNames.get(frame.sessionId)?.delete(String(callId));
                 const pending = pendingSendToolCalls.get(frame.sessionId);
@@ -15923,6 +16585,8 @@ ${carried}看完就照常过日子，不用跟谁宣布；主人问起就自然�
               collectors.delete(frame.sessionId);
               turnLeaseNoted.delete(frame.sessionId);
               const sendToolSucceeded = sendToolSucceededSessions.has(frame.sessionId);
+              // 2026-10-29 老大：二代模式她的文字不会自动发出去；这一轮写了字、却没有调发送工具成功 → 记成「没说出口的」（只在内存里）
+              if (currentMode === 'reserved2' && !sendToolSucceeded && !isSilentTurn) { try { liveFish.noteUnsaid(key, ended.text, { label: liveLabelOf(key) }); } catch { /* 同上 */ } }
               sendToolSucceededSessions.delete(frame.sessionId);
               pendingSendToolCalls.delete(frame.sessionId);
               toolCallNames.delete(frame.sessionId);

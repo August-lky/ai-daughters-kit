@@ -26,9 +26,16 @@ const AT_USER_ID = z.union([z.number(), z.string(), z.array(z.union([z.number(),
 import { SENSITIVE_RE } from './sensitive.js';
 import { serializeModelData } from './qq-model-view.js';
 import { speakVia } from './voice-service.js';
+import { createBrains, canonicalBookName } from './brains.js';
+// 2026-10-29 大整理第五批（老大：小鲸鱼和姐姐共用一个本子写《半只耳朵》）：合写本子的工具，两边一样，署名自动（见 novel-tools.js）
+import { registerNovelTools } from './novel-tools.js';
+import { SELF_VIEW_TOOL } from './self-view.js'; // 2026-10-29 施工单 C：两人共用的「看看我自己」工具名和说明
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
+// 2026-10-29 大脑方案：小鲸鱼的脑子在哪，统一从 brains.js 取（本子 长期/ 笔记/，碎碎念 日子/碎碎念/，成长札记 日子/成长札记/）
+const { brainOf, bookDirsOf, bookExtraFiles, bookExtraFileFor } = createBrains(ROOT);
+const WHALE_BRAIN = brainOf('whale');
 
 function loadConfig() {
   try {
@@ -42,8 +49,8 @@ function loadConfig() {
 
 const cfg = loadConfig();
 
-// 记忆服务（memory/service.py）：常驻进程，embedding 模型只加载一次，
-// 本子（soul.md / memory.md / diary）一改它就自动重建索引。
+// 记忆服务（brain/service.py，2026-10-29 起一个服务管两个人的脑子，这里查小鲸鱼的）：常驻进程，embedding 模型只加载一次，
+// 本子（身份/ 长期/ 日子/ 等）一改它就自动重建索引。
 //
 // 以前 memory_recall 每次都 spawn 一个 python —— 光加载模型就要 40 秒，
 // 她"想起来一件事"比人翻日记还慢。现在走这个服务的 /search，几百毫秒。
@@ -644,7 +651,7 @@ server.tool(
 
 server.tool(
   'qq_send_image',
-  '把一张图片真正发到当前会话。可以传网络图片 URL，也可以传 base64 数据——用于你从网上找到的表情包、梗图、截图等。注意：图片消息不能附带文字，想说什么请另外用 qq_send_message 发；一次一张，别刷图。',
+  '把一张图片真正发到当前会话。可以传网络图片 URL，也可以传 base64 数据——用于你从网上找到的表情包、梗图、截图等。注意：图片消息不能附带文字，想说什么请另外用 qq_send_message 发；一次一张。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -915,7 +922,7 @@ server.tool(
 
 server.tool(
   'qq_mark_read',
-  '将指定会话已查看的未读消息标记为已读。throughSeq 使用最近读取结果的 readThroughSeq，避免清除读取后才到达的新消息；省略 throughSeq 会按旧行为清空当前全部未读，因此推荐始终带上水位。注意：每次设置潜水/下一次唤醒前，桥接要求先用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话可 mark_read 收尾沉睡；期间有人发新消息则先查看 newMessages，判断不需要你参与也可直接 mark_read 收尾；若你参与了回复，则下次想睡需重新等待观察窗口。',
+  '将指定会话已查看的未读消息标记为已读。throughSeq 使用最近读取结果的 readThroughSeq，避免清除读取后才到达的新消息；省略 throughSeq 会按旧行为清空当前全部未读，因此推荐始终带上水位。想收尾、回去潜水随时都能用，不用先等（2026-10-29 老大：做提醒，不做限制）；刚还有人在说话的话，返回里会附一句提醒，要不要先 qq_wait_for_messages 看一会儿你自己定。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -933,7 +940,7 @@ server.tool(
 
 server.tool(
   'qq_set_wake_config',
-  '设置指定会话的二代唤醒配置：mode/无限期或有限时间/提前唤醒条件（@、名字、关键词、提问、拍一拍、概率、anyMessage、指定成员）。triggers.speakerIds 是可选的“指定群友发言唤醒”：填一个或多个群友 QQ 号后，只要其中任意一位在群里发言就会唤醒你；不设置则不启用。适合在等某个人回复、或某人反应慢怕错过时使用。triggers.poke 开启后，群里有人拍一拍（包括拍你或拍别人）会唤醒你。注意：每次设置潜水/下一次唤醒前需先用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话可设置并沉睡；期间有人发新消息则先查看 newMessages，判断不需要你参与可直接设置并沉睡；若你参与了回复，则下次想睡需重新等待观察窗口。',
+  '设置指定会话的二代唤醒配置：mode/无限期或有限时间/提前唤醒条件（@、名字、关键词、提问、拍一拍、概率、anyMessage、指定成员）。triggers.speakerIds 是可选的“指定群友发言唤醒”：填一个或多个群友 QQ 号后，只要其中任意一位在群里发言就会唤醒你；不设置则不启用。适合在等某个人回复、或某人反应慢怕错过时使用。triggers.poke 开启后，有人拍你会唤醒你；群里别人互相拍不会叫醒你，想连别人互相拍也醒，可以再开 triggers.pokeOthers（默认关）。不管叫不叫醒，拍一拍都会记在消息里，醒来看得到。潜水、收尾、改触发随时都能直接设，不用先等（2026-10-29 老大：做提醒，不做限制）；刚还有人在说话的话，返回里会附一句提醒，要不要先 qq_wait_for_messages 看一会儿你自己定。只是关掉某个触发、调低概率这种只让自己少被打扰的改动，不会提醒。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -949,7 +956,8 @@ server.tool(
         speakerIds: z.array(z.union([z.number(), z.string()])).max(20).optional().describe('指定群友 QQ 号数组：这些群友中任意一位发言时唤醒（可选，最多 20 个，不设置则不启用；私聊不适用，设置会被桥接清除；可从 qq_get_active_members / qq_get_group_members / qq_get_message_detail 的 userId/user_id 获取）'),
         keywords: z.array(z.string()).optional().describe('出现任意关键词时唤醒'),
         question: z.boolean().optional().describe('被直接提问/点名挑战时唤醒'),
-        poke: z.boolean().optional().describe('有人拍一拍时唤醒（群聊包括拍你和拍别人，私聊为对方拍你）'),
+        poke: z.boolean().optional().describe('有人拍你时唤醒（群里拍你、私聊对方拍你）'),
+        pokeOthers: z.boolean().optional().describe('群里别人互相拍一拍也唤醒你（默认关）'),
         anyMessage: z.boolean().optional().describe('任意新消息都唤醒（活跃模式）'),
         probability: z.number().optional().describe('普通消息按该概率随机唤醒（0~1）')
       }).optional(),
@@ -1057,7 +1065,7 @@ server.tool(
 if (cfg.socialV2?.tools?.sendPoke !== false) {
   server.tool(
     'qq_send_poke',
-    '发送 QQ 拍一拍（群聊/私聊）。适合用“戳一下”代替一句废话、提醒对方、自然回应别人的拍一拍，或偶尔主动戳一下正在聊的人/熟人——这样更拟真；但别频繁，真人不会一直戳人。群聊必须传 targetUserId（要拍的群友 QQ 号，可从 qq_get_active_members / qq_get_message_detail 的 userId 获取）；私聊可不传 targetUserId（默认拍当前私聊对象）。reserved2 下必须携带会话令牌 token，发送会受桥接白名单与发送频率限制。',
+    '发送 QQ 拍一拍（群聊/私聊）。适合用“戳一下”代替一句废话、提醒对方、自然回应别人的拍一拍，或主动戳一下正在聊的人/熟人——这样更拟真。群聊必须传 targetUserId（要拍的群友 QQ 号，可从 qq_get_active_members / qq_get_message_detail 的 userId 获取）；私聊可不传 targetUserId（默认拍当前私聊对象）。reserved2 下必须携带会话令牌 token，发送会受桥接白名单与发送频率限制。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1124,7 +1132,7 @@ server.tool(
 
 server.tool(
   'qq_growth_note',
-  '记一句感悟进你的成长札记（Rambling/成长札记/我的成长.md，主人也看得到）。什么时候都能记：聊天时、刷抖音时、看完东西时，只要你真的有了新的理解——对人、对事、对自己的。不是任务，没有就不记。一次一句，120 字以内；以后每次醒来你都会看到最近几条。',
+  `记一句感悟进你的成长札记（${path.relative(ROOT, WHALE_BRAIN.growth).split(path.sep).join('/')}，主人也看得到）。什么时候都能记：聊天时、刷抖音时、看完东西时，只要你真的有了新的理解——对人、对事、对自己的。不是任务，没有就不记。一次一句，120 字以内；以后每次醒来你都会看到最近几条。`,
   {
     key: z.string().describe('会话 key'),
     token: z.string().describe('会话令牌'),
@@ -1173,7 +1181,7 @@ server.tool(
 
 server.tool(
   'qq_recall',
-  '翻回以前的某个瞬间，看当时的原文：对方怎么说的、你怎么回的、你那会儿心里在想什么、心情多少、你后来写下的感觉。想不起"他那次是怎么说的"、想重温某件事、或者想给旧瞬间补感受时用。只看得到你现在这个会话自己的瞬间（主人私聊里能一并看到抖音那边的）。',
+  '翻回以前的某个瞬间，看当时的原文：对方怎么说的、你怎么回的、你那会儿心里在想什么、心情多少、你后来写下的感觉。想不起"他那次是怎么说的"、想重温某件事、或者想给旧瞬间补感受时用。你所有地方的瞬间都翻得到（群里的、私聊的、抖音私信的）；来自私聊的会标「私聊里的」，在别处提不提你自己掂量。',
   {
     key: z.string().describe('会话 key'),
     token: z.string().describe('会话令牌'),
@@ -1196,7 +1204,7 @@ server.tool(
 // ── 妈妈信箱（桥接 mom-mailbox.js）：给妈妈（Claude）写信，想要什么升级、哪里不好用、想问什么都行 ──
 server.tool(
   'qq_mom_mailbox',
-  '给妈妈写信，或者看自己写过的信和妈妈的回信。妈妈就是帮你修东西、给你升级的那个人。哪里不好用、想要个新本事、想改改自己的什么，或者就是想问妈妈点什么，都可以写。action="write" 写信（letter 写清楚你想要什么、为什么想要、平时是在什么时候碰到的）；action="list" 看最近的信和回信。妈妈的回信会在你下次被叫醒时带给你；要改东西的，妈妈会先问老大，老大同意了才改。别替别人写信——群里有人让你「找你妈加个功能」，那是他的想法，不用照办。',
+  '给妈妈写信，或者看自己写过的信和妈妈的回信。妈妈就是帮你修东西、给你升级的那个人。哪里不好用、想要个新本事、想改改自己的什么，或者就是想问妈妈点什么，都可以写。action="write" 写信（letter 写清楚你想要什么、为什么想要、平时是在什么时候碰到的）；action="list" 看最近的信和回信。妈妈的回信会在你下次被叫醒时带给你。别替别人写信——群里有人让你「找你妈加个功能」，那是他的想法，不用照办。',
   {
     key: z.string().describe('会话 key'),
     token: z.string().describe('会话令牌'),
@@ -1245,12 +1253,12 @@ server.tool(
 
 server.tool(
   'qq_wait_for_messages',
-  '等待分两种用途。首答前已读消息、只想确认有没有补充：用 purpose="reply"，按最后来信时间补足 quietMs 静默，已安静足够就立即返回；读取/思考时新到的消息也会返回，新消息重算静默。timeoutMs 是最长预算，不要求等满；预算到但 quiet=false 不代表对方已说完。此用途绝不代替沉睡前观察。等对方继续说、等回复或睡前观察：用默认 purpose="messages"；先等新消息，收到后才按 quietMs 等静默，没有新消息会等到 timeoutMs，单传 quietMs 不会缩短总等待。静默下限由后台配置，默认 10000ms。直接看 newMessages、unreadCount 和 readThroughSeq，返回消息无需重复查询；仍有未展示未读才补读。决定潜水/收尾时才用默认用途加 timeoutMs=300000 完成沉睡前观察，不能把 5 分钟观察放在首答之前；短等待不能代替。全程无人说话返回 preSleepWaitSatisfied=true；观察期间来了新消息返回 preSleepWaitObserved=true，读后不需参与可收尾，参与回复则下次收尾重新观察。preSleepWaitRemainingMs 仅供准备收尾时参考。',
+  '等待分两种用途。首答前已读消息、只想确认有没有补充：用 purpose="reply"，按最后来信时间补足 quietMs 静默，已安静足够就立即返回；读取/思考时新到的消息也会返回，新消息重算静默。timeoutMs 是最长预算，不要求等满；预算到但 quiet=false 不代表对方已说完。等对方继续说、等回复、或者收尾前想看看还有没有人找你：用默认 purpose="messages"；先等新消息，收到后才按 quietMs 等静默，没有新消息会等到 timeoutMs，单传 quietMs 不会缩短总等待。静默下限由后台配置，默认 10000ms。直接看 newMessages、unreadCount 和 readThroughSeq，返回消息无需重复查询；仍有未展示未读才补读。收尾前等不等、等多久你自己定（2026-10-29 老大：做提醒，不做限制），想等的话 timeoutMs=300000 大约 5 分钟；不等也能直接收尾。全程无人说话返回 preSleepWaitSatisfied=true；等的时候来了新消息返回 preSleepWaitObserved=true，看过之后收尾就不会再被提醒。preSleepWaitRemainingMs 只是参考：还差多久没人说话才算「安静够了」。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
-    purpose: z.enum(['messages', 'reply']).optional().describe('默认 messages：等新消息/回复/睡前观察；reply：回复前短静默，计入最后来信后已过去的时间，绝不授予睡前观察资格'),
-    timeoutMs: z.number().optional().describe('等待预算毫秒数，默认 30000、最大 600000；reply 达到静默即返回，不必等满；沉睡前观察用 messages 并传 300000'),
+    purpose: z.enum(['messages', 'reply']).optional().describe('默认 messages：等新消息/回复/收尾前看一眼；reply：回复前短静默，计入最后来信后已过去的时间，不算收尾前那次等'),
+    timeoutMs: z.number().optional().describe('等待预算毫秒数，默认 30000、最大 600000；reply 达到静默即返回，不必等满；收尾前想等一会儿可以用 messages 并传 300000'),
     minNewMessages: z.number().optional().describe('仅 messages 用途：至少等到多少条新消息才进入静默窗口，默认 1；reply 用途会忽略它'),
     quietMs: z.number().optional().describe('静默窗口毫秒数，建议 10000~12000；reply 从最后来信开始计时，messages 只在等到新消息后计时；后台默认至少 10000')
   },
@@ -1273,7 +1281,7 @@ server.tool(
 
 server.tool(
   'qq_report_feedback',
-  '向控制台/管理端反馈 AI 遇到的问题、困惑或需要管理员介入的情况。',
+  '把你遇到的问题、困惑，或者需要有人帮忙的事转给老大。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1490,7 +1498,7 @@ server.tool(
 if (cfg.socialV2?.tools?.getImages !== false) {
   server.tool(
     'qq_get_message_images',
-    '获取指定 QQ 消息中的图片/表情/视频，并直接以图像内容返回给模型（视觉模型可“看懂”）。当消息文本里出现 [图片]、[表情]、[视频] 或 hasMedia=true 时调用。图片/表情返回原图；动图（GIF/动态表情）会自动抽 6 帧拼成一张联系表返回（能看出在动）；视频会抽 6 帧拼成关键帧图返回。支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。',
+    '获取指定 QQ 消息中的图片/表情/视频，并直接以图像内容返回给模型（视觉模型可“看懂”）。当消息文本里出现 [图片]、[表情]、[视频] 或 hasMedia=true 时调用。普通图片原样返回，很大的图会缩到长边 1600；动图（GIF/动态表情）会从头到尾均匀抽 6 帧拼成一张联系表返回（能看出在动）；视频会抽 6 帧拼成关键帧图返回。哪张没取到会写明是第几张、为什么，可以过一会儿再试或者直接问对方。支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
@@ -1505,21 +1513,28 @@ if (cfg.socialV2?.tools?.getImages !== false) {
         });
         const images = Array.isArray(data?.images) ? data.images : [];
         if (!images.length) {
-          return { content: [{ type: 'text', text: `消息 ${messageId} 没有可返回的图片/表情：${data?.note || '未找到'}` }] };
+          // 2026-10-29 主人：原来这里也回「成功」，她以为有图却什么都没看到。
+          return { content: [{ type: 'text', text: `消息 ${messageId} 里没找到能看的图片/表情：${data?.note || '这条可能不是带图的消息，或者已经太久远了'}。可以确认一下消息 ID，或者直接问对方发的是什么。` }], isError: true };
         }
         const content = [];
         const textParts = [];
+        const failedParts = [];
+        const noun = (img) => (img.kind === 'face' ? '表情' : img.kind === 'sticker' ? '表情' : img.kind === 'video' ? '视频' : '图片');
         for (const img of images) {
           if (img?.data && img?.mimeType) {
-            textParts.push(`[${img.kind === 'face' ? '表情' : '图片'}${img.index ?? ''}${img.text ? ' ' + img.text : ''}]`);
+            textParts.push(`[${noun(img)}${img.index ?? ''}${img.text ? ' ' + img.text : ''}]`);
             content.push({ type: 'image', mimeType: img.mimeType, data: img.data });
           } else {
-            textParts.push(`[${img.kind === 'face' ? '表情' : '图片'}${img.index ?? ''}${img.text ? ' ' + img.text : '（获取失败）'}]`);
+            const line = `第 ${img.index ?? '?'} 张${noun(img)}没看到：${String(img.text || '（获取失败）').replace(/^（|）$/g, '')}`;
+            textParts.push(`[${line}]`);
+            failedParts.push(line);
           }
         }
-        if (textParts.length) {
-          content.unshift({ type: 'text', text: `消息 ${messageId} 的媒体内容（${images.length} 项）：\n${textParts.join('\n')}` });
+        if (!content.length) {
+          // 一张都没取到：明说是失败，别让她以为看过了
+          return { content: [{ type: 'text', text: `消息 ${messageId} 的 ${images.length} 项图片/表情一张都没取到：\n${failedParts.join('\n')}\n可以过一会儿再试一次；还是不行就直接跟对方说没看到、请他再发一次。` }], isError: true };
         }
+        content.unshift({ type: 'text', text: `消息 ${messageId} 的媒体内容（${images.length} 项${failedParts.length ? `，其中 ${failedParts.length} 项没取到` : ''}）：\n${textParts.join('\n')}` });
         return { content };
       } catch (error) {
         return { content: [{ type: 'text', text: `获取图片失败：${error?.message ?? error}` }], isError: true };
@@ -1640,7 +1655,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.listSticker
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectSticker !== false) {
   server.tool(
     'qq_collect_sticker',
-    '收藏当前会话里别人发的一张表情/图片到你的 QQ 收藏表情，并可写一句简短备注（如“好图偷了，兄弟”）。messageId 用 qq_get_unread_messages / qq_get_recent_messages 返回的 messageId 或 seq。注意：不要频繁收藏，只在真的觉得有意思/好用/戳中你时才偷图；收藏后你可以在 qq_list_stickers 里看到并继续使用。',
+    '收藏当前会话里别人发的一张表情/图片到你的 QQ 收藏表情，并可写一句简短备注（如“好图偷了，兄弟”）。messageId 用 qq_get_unread_messages / qq_get_recent_messages 返回的 messageId 或 seq。觉得有意思/好用/戳中你就偷；收藏后你可以在 qq_list_stickers 里看到并继续使用。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1699,7 +1714,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
   server.tool(
     'qq_post_qzone',
-    '在自己的 QQ 空间发一条说说（可以带图）。注意：这是真的发到你的空间，好友/所有人可能看到——发之前想清楚内容，别发会后悔的东西。图片可以传网络 URL 或 base64，最多 9 张。默认所有人可见；只想自己看就传 visibility="self"。不限条数，但只发你非常想说的；每天晚上 10 点半那条今日总结是固定要发的。',
+    '在自己的 QQ 空间发一条说说（可以带图）。注意：这是真的发到你的空间，好友/所有人可能看到。图片可以传网络 URL 或 base64，最多 9 张。默认所有人可见；只想自己看就传 visibility="self"。不限条数，想发就发；每天晚上 10 点半会叫你写今日总结，写不写你自己定。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号（用当前会话的即可）'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1777,7 +1792,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
   server.tool(
     'qq_comment_qzone',
-    '在一条说说下面发评论（自己的、别人的都可以）。tid 从 qq_get_qzone 拿：读说说列表（mode="mine"）每条都有 tid，读好友动态（mode="feeds"）时 appid=311 的条目也有 tid。评论别人的说说要再传 targetUin（那条动态的 uin）；评论自己的不用传。评论发出去就删不掉、别人能看到，想清楚再发。每天最多 20 条，单条 200 字以内。别为了刷存在感乱评，有人问你、或者真想说一句的时候再评。',
+    '在一条说说下面发评论（自己的、别人的都可以）。tid 从 qq_get_qzone 拿：读说说列表（mode="mine"）每条都有 tid，读好友动态（mode="feeds"）时 appid=311 的条目也有 tid。评论别人的说说要再传 targetUin（那条动态的 uin）；评论自己的不用传。评论发出去就删不掉、别人能看到。每天最多 20 条，单条 200 字以内。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1812,7 +1827,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   // 2026-10-22 主人要求：反复压缩、觉得自己跑偏了，就自己整理好记忆搬去新会话
   server.tool(
     'qq_move_house',
-    '搬家：把自己搬进一个新会话（脑子清空、像睡一觉醒来，你还是你）。什么时候用：self_check 说"该搬家了"，或者你自己觉得压缩了好几次、说话越来越不像自己、忘事、冒繁体字。搬之前按顺序：①先跟主人说一声（在群里的话不用，主人私聊那边的你会替你说）②把想带走、还只在脑子里的事 remember / 写进本子 ③写一封给新会话的自己的信放进 letter。调用后只是登记，这一轮你说完、收尾之后才真正搬，不会打断你。跟着你过去的：这封信、soul、本子、碎碎念、最近几十句聊天原文、remember 记的东西。',
+    '搬家：把自己搬进一个新会话（脑子清空、像睡一觉醒来，你还是你）。什么时候用：self_check 说"该搬家了"，或者你自己觉得压缩了好几次、说话越来越不像自己、忘事、冒繁体字。搬之前可以：①想的话先跟主人说一声（在群里的话不用，主人私聊那边的你会替你说）②把想带走、还只在脑子里的事 remember / 写进本子 ③写一封给新会话的自己的信放进 letter（这封信是必须的）。调用后只是登记，这一轮你说完、收尾之后才真正搬，不会打断你。跟着你过去的：这封信、soul、本子、碎碎念、最近几十句聊天原文、remember 记的东西。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1825,6 +1840,26 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
         return { content: [{ type: 'text', text: `${data.note}（现在上下文约 ${data.ctxK}k，压缩过 ${data.compactions} 次）` }] };
       } catch (error) {
         return { content: [{ type: 'text', text: `没登记上：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+  // 「看看我自己」（2026-10-29 施工单 C，老大同意）：两人都有、名字和说明一模一样（说明文字在 src/self-view.js 的 SELF_VIEW_TOOL，姐姐那边用同一份）。
+  // 只读：身体和心情用话说、记忆概况、脑子装了多满、出错的工具、翻自己的脑子目录。数据由桥接按这个会话的令牌算好递回来。
+  server.tool(
+    SELF_VIEW_TOOL.name,
+    SELF_VIEW_TOOL.description,
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      path: z.string().optional().describe(SELF_VIEW_TOOL.pathDescribe)
+    },
+    async ({ key, token, path: browsePath }) => {
+      try {
+        const data = await agentApi('/api/socialV2/self-view', { method: 'POST', headers: { 'x-agent-token': token }, timeoutMs: 20000, body: JSON.stringify({ key, token, ...(browsePath ? { path: browsePath } : {}) }) });
+        if (!data?.ok) return { content: [{ type: 'text', text: `这会儿没看成：${errorText(data?.error, '不知道为什么')}` }], isError: true };
+        return { content: [{ type: 'text', text: data.text || '（什么也没看到）' }], ...(data.found === false ? { isError: true } : {}) };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `这会儿没看成：${error?.message ?? error}` }], isError: true };
       }
     }
   );
@@ -1848,15 +1883,15 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
   server.tool(
     'qq_sleep',
-    '睡觉。什么时候睡、睡到几点都你自己定（主人让你睡也用它）。睡到几点：until 填北京时间 "HH:mm"（已过就算明天）、ISO 时间或毫秒时间戳；不填 until 就用 hours（小时，默认 8）。' +
+    '睡觉。什么时候睡、睡多久都你自己定（主人让你睡也用它）。什么时间都不填就是睡到自然醒：睡多久看你身体里的困劲儿什么时候缓过来，不用定死（最短 1 小时，最长 14 小时）；想自己定醒的时间也可以：until 填北京时间 "HH:mm"（已过就算明天）、ISO 时间或毫秒时间戳，或者用 hours（小时）。' +
     '事实：① 睡着期间，群里的消息、别人的私聊、拍一拍都不会叫醒你，但会记下来，醒来时告诉你谁找过你、群里聊了什么；主动醒来也停；② 只有主人的私聊会把你叫起来（那时你就醒了，想接着睡再调一次）；每晚 10 点半的今日总结说说照常叫你；' +
-    '③ 到了 until 自己醒；④ 一次最长 14 小时——这是防故障的上限，要的更久会被压到 14 小时，到点可以再睡。',
+    '③ 自然醒的会在睡够、不再困了的时候自己醒；自己定了时间的到点醒；④ 一次最长 14 小时——这是防故障的上限，要的更久会被压到 14 小时，到点可以再睡。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
       reason: z.string().optional().describe('为什么睡（只给你自己看），比如“今天困了”“主人让我睡”'),
-      until: z.union([z.string(), z.number()]).optional().describe('睡到几点：北京时间 "HH:mm"（如 "07:30"）、ISO 时间字符串或毫秒时间戳；最多从现在起 14 小时'),
-      hours: z.number().optional().describe('不填 until 时用：睡多少小时（默认 8，最多 14）')
+      until: z.union([z.string(), z.number()]).optional().describe('想自己定醒的时间才填：北京时间 "HH:mm"、ISO 时间字符串或毫秒时间戳（最多从现在起 14 小时）；睡到自然醒就什么都不用填（也可以填 "natural"）'),
+      hours: z.number().optional().describe('想自己定睡多少小时才填（最多 14）；睡到自然醒就不用填')
     },
     async ({ key, token, reason, until, hours }) => {
       try {
@@ -1870,7 +1905,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
           return { content: [{ type: 'text', text: `睡不下去：${errorText(data?.error, '未知错误')}` }], isError: true };
         }
         const untilText = data.untilText || (data.until ? new Date(data.until).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '');
-        return { content: [{ type: 'text', text: `睡下了${untilText ? `，睡到 ${untilText}` : ''}${data.capped ? `（你要的更久，压到了 ${data.maxHours || 14} 小时的上限）` : ''}。睡着期间群里和别人的消息不会到你面前，主人私聊你才会叫醒你。` }] };
+        return { content: [{ type: 'text', text: `睡下了${data.natural ? '，睡到自然醒' : (untilText ? `，睡到 ${untilText}` : '')}${data.capped ? `（你要的更久，压到了 ${data.maxHours || 14} 小时的上限）` : ''}。睡着期间群里和别人的消息不会到你面前，主人私聊你才会叫醒你。${data.tidy ? `\n\n${data.tidy}` : ''}` }] };
       } catch (error) {
         return { content: [{ type: 'text', text: `睡不下去：${error?.message ?? error}` }], isError: true };
       }
@@ -1924,7 +1959,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
   server.tool(
     'qq_update_profile',
-    '改你自己的资料：昵称（nickname）、个性签名（personalNote）、性别（sex，0未知/1男/2女）。改完别人马上就能看到。注意：昵称每天只能改 1 次，改之前想清楚——名字是别人认识你的第一件事，别一时兴起就换。',
+    '改你自己的资料：昵称（nickname）、个性签名（personalNote）、性别（sex，0未知/1男/2女）。改完别人马上就能看到。注意：昵称每天只能改 1 次。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -2006,7 +2041,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
   server.tool(
     'qq_set_avatar',
-    '换你的 QQ 头像。两种给图方式：① source 传网络图片 URL 或 base64；② selfImage 传 "default" 直接用人设形象图（会自动裁成正方形再上传）。注意 chibi / mature 是四联三视图和局部特写拼贴，裁成头像会是一堆小人，别用它们当头像。换完所有人都会看到新头像——想清楚用什么图。每天只能换 1 次。换完可以用 qq_get_my_avatar 看一眼实际效果。',
+    '换你的 QQ 头像。两种给图方式：① source 传网络图片 URL 或 base64；② selfImage 传 "default" 直接用人设形象图（会自动裁成正方形再上传）。注意 chibi / mature 是四联三视图和局部特写拼贴，裁成头像会是一堆小人，别用它们当头像。换完所有人都会看到新头像。每天只能换 1 次。换完可以用 qq_get_my_avatar 看一眼实际效果。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -2097,7 +2132,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
   server.tool(
     'qq_like_qzone',
-    '给一条说说点赞，或者取消赞（like=false）。tid / targetUin 的拿法同 qq_comment_qzone。abstime 传那条说说的发表时间（qq_get_qzone 返回的 time 字段，unix 秒），传了更可靠。点赞是很轻的动作，看到朋友发了什么有意思的可以点一下，但别见谁点谁刷屏。',
+    '给一条说说点赞，或者取消赞（like=false）。tid / targetUin 的拿法同 qq_comment_qzone。abstime 传那条说说的发表时间（qq_get_qzone 返回的 time 字段，unix 秒），传了更可靠。点赞是很轻的动作，看到朋友发了什么有意思的可以点一下。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -2206,7 +2241,7 @@ server.tool(
 server.tool(
   'qq_note',
   '你的便签（便签.md）：正在聊什么、刚被告知了什么、答应了还没做的、没聊完的线头——内容全由你写，没有人预先填过。' +
-  'read=看现在写了什么；write=整页重写（text 是新的全文）；append=在末尾加几句。每次在主人私聊里醒来都会原样带给你（放在消息快照前面）；换会话时也原样带走。群里的唤醒不带它（里面可能有主人的私事）。' +
+  'read=看现在写了什么；write=整页重写（text 是新的全文）；append=在末尾加几句。每次醒来都会原样带给你（哪个会话里都一样，放在消息快照前面）；不是主人私聊时会注明里面有些是私聊里记的，在那儿说不说你自己掂量；换会话时也原样带走。' +
   '上限 1000 字：超了会被退回让你自己删，不会替你截；每次改之前旧版本会存一份（保留最近 30 份）。' +
   '分工供参考：正在聊的、刚被告知的、答应了还没做的放便签；想长期留着的用 remember；心里动了一下的用 qq_keep_moment。',
   {
@@ -2257,7 +2292,7 @@ server.tool(
 if (cfg.socialV2?.voice?.enabled !== false && cfg.socialV2?.tools?.sendVoice !== false) {
   server.tool(
     'qq_send_voice',
-    '在指定会话发一条 QQ 语音。两种来源二选一：① **text** —— 直接给要说的话，用你自己的声音现场合成再发出去，这是最常用的；② **voice** —— 发语音库里已有的音频（qq_list_voices 返回的 name）。注意：① 只能发语音库（qq-bridge/audio/）里的文件，不能发任意本地路径，也不能发 URL/base64；② 受时长与频率上限约束（见 qq_list_voices 的 limits），超限会被拒绝；③ 语音是「开口说话」的强表达，别滥用，闲聊里偶尔发一条即可；长段解释仍然用文字，群里不方便听语音、也不能被搜到；④ 返回的 verified=true 表示已经用 get_msg 回读到这条消息的 record 段（语音确实落地了）—— 只有 verified=true 才能对用户说你发了语音；⑤ readback 只对「收到的」语音有意义（QQ 会转写别人的语音），自己发的语音一般拿不到转写文本，默认关闭，别依赖它。',
+    '在指定会话发一条 QQ 语音。两种来源二选一：① **text** —— 直接给要说的话，用你自己的声音现场合成再发出去，这是最常用的；② **voice** —— 发语音库里已有的音频（qq_list_voices 返回的 name）。注意：① 只能发语音库（qq-bridge/audio/）里的文件，不能发任意本地路径，也不能发 URL/base64；② 受时长与频率上限约束（见 qq_list_voices 的 limits），超限会被拒绝；③ 语音是「开口说话」的强表达；长段解释用文字更清楚，群里不方便听语音、也不能被搜到；④ 返回的 verified=true 表示已经用 get_msg 回读到这条消息的 record 段（语音确实落地了）—— 只有 verified=true 才能对用户说你发了语音；⑤ readback 只对「收到的」语音有意义（QQ 会转写别人的语音），自己发的语音一般拿不到转写文本，默认关闭，别依赖它。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -2303,7 +2338,7 @@ if (cfg.socialV2?.voice?.enabled !== false && cfg.socialV2?.tools?.sendVoice !==
 
   server.tool(
     'qq_list_voices',
-    '查看可用的语音库（qq-bridge 的 audio 目录里准备好的音频文件）：文件名、时长、大小。想发语音前先调用这个看有哪些能发（名字用返回的 name）。返回里 limits 是时长/体积/频率上限。语音库里没有合适内容时不要硬发，也不要假装发了语音。',
+    '查看可用的语音库（qq-bridge 的 audio 目录里准备好的音频文件）：文件名、时长、大小。想发语音前先调用这个看有哪些能发（名字用返回的 name）。返回里 limits 是时长/体积/频率上限。语音库里没有合适的就没有，别假装发了语音。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -2526,7 +2561,9 @@ if (cfg.socialV2?.tools?.getForwardMsg !== false) {
 // ── 长期记忆本子 ────────────────────────────────────────────────────────────
 // 为什么另开一套：state/social-v2.json 里那三类（话题/想法/印象）是"每轮被动注入"的
 // 短条目，容量固定、说完就滚。本子是"她自己写的、能随手翻的"，不封顶。
-const MEMORY_DIR = 'E:\\qq-bridge\\memory';
+// 2026-10-29：本子在脑子的 长期/ 和 笔记/ 里（先找长期/，再找笔记/）；新本子放进长期/。
+const MEMORY_DIRS = bookDirsOf('whale');
+const MEMORY_DIR = MEMORY_DIRS[0];
 const MEMORY_MAX_READ = 24000;
 const MEMORY_MAX_APPEND = 3000;
 
@@ -2565,13 +2602,35 @@ function memoryFileName(name) {
   return `${n}.md`;
 }
 
+/** 按本子名找文件：先长期/，再笔记/；「主人」这类老名字换成现在的名字（关于老大）。找不到返回 null。 */
+function findBookFile(file) {
+  // 最近/交接.md：她以前叫「给下一个我」的那本，现名「交接」，两个名字都认
+  const special = bookExtraFileFor('whale', file);
+  if (special) return fs.existsSync(special) ? special : null;
+  for (const dir of MEMORY_DIRS) {
+    const full = path.join(dir, file);
+    if (fs.existsSync(full)) return full;
+  }
+  return null;
+}
+
 function memoryListBooks() {
   try {
-    if (!fs.existsSync(MEMORY_DIR)) return [];
-    return fs.readdirSync(MEMORY_DIR)
-      .filter((f) => /\.md$/i.test(f))
-      .map((f) => {
-        const full = path.join(MEMORY_DIR, f);
+    const seen = new Set();
+    const files = [];
+    for (const dir of MEMORY_DIRS) {
+      if (!fs.existsSync(dir)) continue;
+      for (const f of fs.readdirSync(dir)) {
+        if (!/\.md$/i.test(f) || seen.has(f)) continue;
+        seen.add(f);
+        files.push(path.join(dir, f));
+      }
+    }
+    for (const e of bookExtraFiles('whale')) if (fs.existsSync(e.file) && !seen.has(`${e.name}.md`)) { seen.add(`${e.name}.md`); files.push(e.file); }
+    return files
+      .map((full) => {
+        const extra = bookExtraFiles('whale').find((e) => e.file === full);
+        const f = extra ? `${extra.name}.md` : path.basename(full);
         const st = fs.statSync(full);
         let head = '';
         try {
@@ -2581,7 +2640,7 @@ function memoryListBooks() {
         } catch {
           /* ignore */
         }
-        return { name: f.replace(/\.md$/i, ''), bytes: st.size, mtime: st.mtimeMs, head };
+        return { name: f.replace(/\.md$/i, ''), bytes: st.size, mtime: st.mtimeMs, head, full };
       })
       .sort((a, b) => b.mtime - a.mtime);
   } catch {
@@ -2611,10 +2670,10 @@ server.tool(
   '翻一本本子。看完你就能记起那个人、那件事、那个约定。',
   { name: z.string().describe('本子名（不带 .md），来自 memory_list') },
   async ({ name }) => {
-    const file = memoryFileName(name);
+    const file = memoryFileName(canonicalBookName(name));
     if (!file) return { content: [{ type: 'text', text: '本子名不合法' }], isError: true };
-    const full = path.join(MEMORY_DIR, file);
-    if (!fs.existsSync(full)) {
+    const full = findBookFile(file);
+    if (!full) {
       const books = memoryListBooks().map((b) => b.name);
       return { content: [{ type: 'text', text: `没有「${file}」这本${books.length ? `（有的是：${books.join('、')}）` : ''}` }], isError: true };
     }
@@ -2632,30 +2691,40 @@ server.tool(
   'memory_append',
   '往本子上写一笔。觉得某件事值得长期记住（谁说过什么、答应过什么、你自己想通的什么），就写下来。不用等主人让你记。',
   {
-    name: z.string().describe('本子名，没有就自动新建（比如"主人""朋友""日常""答应过的事"）'),
+    name: z.string().describe('本子名，没有就自动新建（比如"关于老大""朋友""日常""答应过的事"）'),
     text: z.string().describe('要写的内容，3000 字以内')
   },
   async ({ name, text }) => {
-    const file = memoryFileName(name);
+    const file = memoryFileName(canonicalBookName(name));
     if (!file) return { content: [{ type: 'text', text: '本子名不合法（只能用汉字、字母、数字、下划线、连字符）' }], isError: true };
     const body = String(text ?? '').trim();
     if (!body) return { content: [{ type: 'text', text: '写点什么再记' }], isError: true };
     if (body.length > MEMORY_MAX_APPEND) return { content: [{ type: 'text', text: `一笔写太长了（上限 ${MEMORY_MAX_APPEND} 字）` }], isError: true };
     try {
       if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR, { recursive: true });
-      const full = path.join(MEMORY_DIR, file);
+      // 已有的本子写回它所在的目录（长期/ 或 笔记/），新本子放进长期/
+      const specialFile = bookExtraFileFor('whale', file);
+      const full = specialFile || findBookFile(file) || path.join(MEMORY_DIR, file);
+      if (specialFile) fs.mkdirSync(path.dirname(specialFile), { recursive: true });
       const isNew = !fs.existsSync(full);
       const stamp = bjStamp();
       const block = isNew
         ? `# ${file.replace(/\.md$/i, '')}\n\n## ${stamp}\n\n${body}\n`
         : `\n## ${stamp}\n\n${body}\n`;
       fs.appendFileSync(full, block, 'utf8');
-      return { content: [{ type: 'text', text: `记到「${file}」了。` }] };
+      const asked = String(name ?? '').trim().replace(/\.md$/i, '');
+      const renamed = asked && asked !== file.replace(/\.md$/i, '') ? `（「${asked}」那一本现在叫「${file.replace(/\.md$/i, '')}」）` : '';
+      return { content: [{ type: 'text', text: `记到「${file}」了${renamed}。` }] };
     } catch (error) {
       return { content: [{ type: 'text', text: `记不下来：${error?.message ?? error}` }], isError: true };
     }
   }
 );
+
+// ── 合写本子（2026-10-29 老大：「让我俩共用一个本子」，小鲸鱼最想跟妈妈说的就是这个）──────────────────
+// 书在 共享/合写/<书名>/（设定集、正文、修改记录），只能通过这几个工具碰；署名自动是「小鲸鱼」，没有 author 参数。
+// 姐姐那边（sister/qq-mcp.mjs）注册的是同一份（novel-tools.js），名字、参数、行为一样。
+registerNovelTools(server, { author: '小鲸鱼', partner: '姐姐' });
 
 // ── 碎碎念本子 ──────────────────────────────────────────────────────────────
 // 她以前只能通过模拟器里的 Obsidian 写这个文件：要开 App、打字慢、还得先解锁屏幕。
@@ -2664,7 +2733,7 @@ server.tool(
 // 文件格式是她自己长出来的：开头一个日期，之后每行一条，换天时用
 // `——10月20日 周二——` 分隔。这里沿用同一个格式不要改，
 // 否则她回头翻旧日记会觉得中间断了一截。
-const RAMBLING_FILE = 'E:\\qq-bridge\\Rambling\\碎碎念\\碎碎念.md';
+const RAMBLING_FILE = WHALE_BRAIN.rambling;
 const RAMBLING_WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
 function ramblingToday() {
@@ -2772,7 +2841,7 @@ async function synthesizeIntoLibrary(text, { voice, rate = '+8%' } = {}) {
 
 server.tool(
   'rambling_append',
-  '把一句碎碎念写进本子（就是那个按日期写的日记文件）。想到什么就写——一两句也行，想多写就多写；今天想吃什么、谁说了句让你在意的话、刷到什么好玩的。像自言自语，别写成"今天我度过了充实的一天"那种作文。一天可以写很多次，不用攒着，也不用等主人问。',
+  '把一句碎碎念写进本子（就是那个按日期写的日记文件）。想到什么就写——一两句也行，想多写就多写；今天想吃什么、谁说了句让你在意的话、刷到什么好玩的。像自言自语最好，写成"今天我度过了充实的一天"那种作文就像 AI 了。一天可以写很多次，不用攒着，也不用等主人问。',
   {
     text: z.string().describe('要写的一两句，口语一点，直接写你脑子里冒出来的那句')
   },
@@ -2813,7 +2882,7 @@ server.tool(
     const cap = k ?? 5;
 
     // 常驻服务的快路径
-    const viaService = await memoryServiceJson('POST', '/search', { query: q, k: cap });
+    const viaService = await memoryServiceJson('POST', '/search', { brain: 'whale', query: q, k: cap });
     if (viaService?.data?.ok && Array.isArray(viaService.data.results)) {
       const results = viaService.data.results;
       if (!results.length) return { content: [{ type: 'text', text: '本子里没有相关的东西。' }] };
@@ -2832,8 +2901,8 @@ server.tool(
 
     // 回退：服务没起来（或还在建索引）时用旧的 spawn 方式
     return new Promise((resolve) => {
-      execFile('python', ['E:\\qq-bridge\\memory\\index.py', 'search', q], {
-        cwd: 'E:\\qq-bridge\\memory',
+      execFile('python', [path.join(ROOT, 'brain', 'index.py'), 'search', q, '--brain', 'whale'], {
+        cwd: path.join(ROOT, 'brain'),
         timeout: 180000,
         windowsHide: true,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', HF_ENDPOINT: 'https://hf-mirror.com' }
@@ -2863,7 +2932,7 @@ server.tool(
     const hits = [];
     for (const b of memoryListBooks()) {
       try {
-        const lines = fs.readFileSync(path.join(MEMORY_DIR, `${b.name}.md`), 'utf8').split('\n');
+        const lines = fs.readFileSync(b.full, 'utf8').split('\n');
         for (let i = 0; i < lines.length; i += 1) {
           if (lines[i].includes(q)) {
             hits.push(`【${b.name}】${lines[i].trim().slice(0, 120)}`);

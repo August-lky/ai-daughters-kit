@@ -2,7 +2,7 @@
 //
 // 会话搬家之后旧记录没人再读：她发过的原话、对方的原话、当时的推理（reasoning）
 // 都还躺在里面。这个模块把它们按"一次交流"重新拼起来，只留有分量的那些，
-// 写进 state/episodes/（见 episodes.js）。
+// 写进脑子的 瞬间/（见 episodes.js、brains.js）。
 //
 // 一次交流 = 她的一串连续发言（同一个 key、间隔 ≤90 秒）+ 发言前 10 分钟内对方的话
 //           + 发出第一句话的那条 assistant 消息里的 reasoning 节选。
@@ -11,7 +11,7 @@
 //   ② 心情时间线（feiyu-mood state.json 的 timeline）在 [前 5 分钟, 后 10 分钟] 里有 |delta| ≥ 3 的一行；
 //   ③ 主人私聊里，主人 3 分钟内连发 ≥2 句而她回了；
 //   ④ 对话或推理里带明显的情绪词（STRONG_RE）。
-// 去重交给仓库（同 key、同一句开头、±2 分钟）。增量：state/episodes/extracted.json 记着
+// 去重交给仓库（同 key、同一句开头、±2 分钟）。增量：瞬间/extracted.json 记着
 // 每个 sid 处理时的文件字节数，没变就不再处理。
 //
 // 隐私：工具参数（arguments）整体不进记录；令牌、userId、QQ 号不进记录。只取消息正文、
@@ -23,6 +23,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createEpisodeStore, detectCall, formatEpisode, moodSnapshot, normalizeEpisode } from './episodes.js';
+import { createBrains } from './brains.js';
+import { rowsSwing } from './mood.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -270,18 +272,21 @@ export function extractSessionEpisodes(sid, {
     // ② 心情波动
     const moodRows = timeline.filter((r) => r.at >= c.start - WINDOW.moodBeforeMs && r.at <= c.end + WINDOW.moodAfterMs);
     const moodDelta = moodRows.reduce((m, r) => Math.max(m, Math.abs(Number(r.delta) || 0)), 0);
+    // 2026-10-29 大脑方案下半：心情分一次最多只动 1，真正的起伏在某种情绪的变动上（实测 99% 的单次变动 ≤4），一并看；
+    // 超过 mood.js 的阈值的瞬间同时会记进 压着.json。
+    const dimDelta = rowsSwing(moodRows).dd;
     // ③ 主人连发
     const ownerLines = themRows.filter((m) => m.isOwner);
     const ownerBurst = c.key === ownerKey && ownerLines.length >= 2 && (ownerLines[ownerLines.length - 1].at - ownerLines[0].at) <= WINDOW.ownerBurstMs;
     // ④ 情绪词
     const strong = STRONG_RE.test([...themRows.map((m) => m.line), ...me, inner].join('\n'));
-    if (!(anchored || moodDelta >= 3 || ownerBurst || strong)) continue;
+    if (!(anchored || moodDelta >= 3 || dimDelta >= 4 || ownerBurst || strong)) continue;
 
     let mood = null;
     const near = timeline.map((r) => ({ r, d: Math.abs(r.at - c.start) })).filter((x) => x.d <= WINDOW.moodNearMs).sort((a, b) => a.d - b.d)[0]?.r;
     if (near) {
       const snap = moodSnapshot({ mood: near.mood, dims: near.dims, updatedAt: near.at }, near.at);
-      if (snap) mood = { ...snap, ...(moodDelta ? { d: moodDelta } : {}) };
+      if (snap) mood = { ...snap, ...(moodDelta ? { d: moodDelta } : {}), ...(dimDelta ? { dd: dimDelta } : {}) };
     }
     const isOwnerChat = c.key === ownerKey || c.key === 'douyin:dm';
     const ep = {
@@ -295,7 +300,7 @@ export function extractSessionEpisodes(sid, {
       mood,
       call: isOwnerChat ? detectCall(me) : '',
       felt: '',
-      tags: [anchored ? '记过' : '', moodDelta >= 3 ? '心情波动' : '', ownerBurst ? '主人连说' : '', strong ? '有情绪' : ''].filter(Boolean),
+      tags: [anchored ? '记过' : '', moodDelta >= 3 || dimDelta >= 4 ? '心情波动' : '', ownerBurst ? '主人连说' : '', strong ? '有情绪' : ''].filter(Boolean),
       source: 'extract'
     };
     episodes.push(normalizeEpisode(ep));
@@ -336,8 +341,10 @@ export function loadExtractEnv(root = ROOT) {
     skewMs: skew,
     moodTimeline: Array.isArray(mood?.timeline) ? mood.timeline : [],
     douyinAllowlist: Array.isArray(policy?.allowlist) ? policy.allowlist : [],
-    episodesDir: path.join(root, 'state', 'episodes'),
-    indexFile: path.join(root, 'state', 'episodes', 'extracted.json')
+    // 2026-10-29 大脑方案：瞬间在小鲸鱼脑子的 瞬间/ 里（路径统一从 brains.js 取）
+    episodesDir: createBrains(root).brainOf('whale').momentsDir,
+    pressedFile: createBrains(root).brainOf('whale').pressed,
+    indexFile: createBrains(root).brainOf('whale').extracted
   };
 }
 
@@ -348,7 +355,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   if (!sid) { console.error('用法：node src/episode-extract.js <sid> [--force] [--dry] [--print]'); process.exit(2); }
   const env = loadExtractEnv();
   const dry = args.includes('--dry');
-  const store = dry ? null : createEpisodeStore({ dir: env.episodesDir, skewMs: env.skewMs, ownerKey: env.ownerQQ ? `private:${env.ownerQQ}` : '' });
+  const store = dry ? null : createEpisodeStore({ dir: env.episodesDir, pressedFile: env.pressedFile, skewMs: env.skewMs, ownerKey: env.ownerQQ ? `private:${env.ownerQQ}` : '' });
   const r = extractSessionEpisodes(sid, { ...env, store, indexFile: dry ? '' : env.indexFile, force: args.includes('--force') });
   const perKey = {};
   for (const e of r.episodes) perKey[e.key] = (perKey[e.key] || 0) + 1;

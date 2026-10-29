@@ -110,7 +110,7 @@ const msg = (isSelf, agoMs) => ({ isSelf, time: NOW - agoMs, text: isSelf ? '我
   ok('self.md：历史只留最近 keep 份（桥接里 keep=50）');
   // 桥接接线：路径在她的本子目录、历史在 state 下、每次唤醒都带 selfLine、get-prompt 的角色卡后面接它
   const bridgeSrc = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
-  assert.match(bridgeSrc, /SELF_NOTE_FILE = path\.join\(ROOT, 'memory', '小鲸鱼', 'self\.md'\)/);
+  assert.match(bridgeSrc, /SELF_NOTE_FILE = WHALE_BRAIN\.self;/); // 2026-10-29 大脑方案：路径从 brains.js 取（身份/self.md）
   assert.match(bridgeSrc, /SELF_NOTE_HISTORY_DIR = path\.join\(STATE_DIR, 'agents', 'self-history'\)/);
   assert.match(bridgeSrc, /const base = roleLine \+ identityLine \+ (?:whoLine \+ )?selfLine \+ tokenLine/);
   assert.match(bridgeSrc, /\$\{selfNote\.promptBlock\(\)\}`, self: selfNote\.read\(\)\.text \}/);

@@ -1,0 +1,28 @@
+{
+  "_说明": "两个人的脑子在哪。Python（brain/index.py、brain/service.py）和 Node（src/brains.js）都读这一份，路径写相对 root 的；root 是相对本文件所在目录。换机器部署时只改 root 和 dsh。目录里的子文件夹结构是固定的（身份/长期/人/瞬间/日子/最近/笔记/作品/.索引/归档），见 workspace/大脑方案-2026-10-29.md。",
+  "root": "..",
+  "dsh": "~/.dsh",
+  "default": "whale",
+  "novelRoot": "共享/合写",
+  "momDir": "家/妈妈",
+  "brains": {
+    "whale": {
+      "name": "小鲸鱼",
+      "aliases": ["小鲸鱼", "鲸", "鲸鱼", "妹妹", "whale", "🐳"],
+      "home": "家/小鲸鱼",
+      "brain": "家/小鲸鱼/脑子",
+      "gallery": "家/小鲸鱼/形象图",
+      "extraSources": [{ "path": "家/小鲸鱼/聊天记录", "kind": "聊天记录" }],
+      "fishMemory": true
+    },
+    "sister": {
+      "name": "姐姐",
+      "aliases": ["姐姐", "克", "克劳德", "克劳德姐姐", "sister", "claude", "📖"],
+      "home": "sister/home",
+      "brain": "sister/home/脑子",
+      "gallery": "",
+      "extraSources": [{ "path": "sister/聊天记录", "kind": "聊天记录" }],
+      "fishMemory": false
+    }
+  }
+}

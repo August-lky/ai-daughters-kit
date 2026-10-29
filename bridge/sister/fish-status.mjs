@@ -78,8 +78,8 @@ export function fishStatus({ bridgeState, nameOf = (k) => k, now = Date.now(), p
   const detail = [];
   let line;
   if (asleep) {
-    line = `小鲸鱼在睡觉${sleep.until ? `，打算睡到 ${bjText(sleep.until, skew)}` : ''}`;
-    detail.push(`在睡觉：${sleep.since ? `${bjText(sleep.since, skew)} 睡的` : ''}${sleep.until ? `，打算睡到 ${bjText(sleep.until, skew)}` : ''}${sleep.reason ? `（她睡前说：${String(sleep.reason).slice(0, 60)}）` : ''}`);
+    line = `小鲸鱼在睡觉${sleep.natural ? '，打算睡到自然醒' : (sleep.until ? `，打算睡到 ${bjText(sleep.until, skew)}` : '')}`; // 2026-10-29：自然醒的 until 只是 14 小时的上限，不当成她定的钟点
+    detail.push(`在睡觉：${sleep.since ? `${bjText(sleep.since, skew)} 睡的` : ''}${sleep.natural ? '，打算睡到自然醒' : (sleep.until ? `，打算睡到 ${bjText(sleep.until, skew)}` : '')}${sleep.reason ? `（她睡前说：${String(sleep.reason).slice(0, 60)}）` : ''}`);
     detail.push('睡着的时候别人找她不会叫醒她，消息会攒着，她醒了会看到。');
   } else if (watch) {
     line = `小鲸鱼醒着，正在刷抖音（${ago(Number(watch.at), now)}在看《${String(watch.title || '').replace(/\s+/g, ' ').slice(0, 30)}》）`;

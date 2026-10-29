@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { createMomMailbox } from '../src/mom-mailbox.js';
+import { createMomMailbox, redactSecrets, TOKEN_MASK } from '../src/mom-mailbox.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mom-mailbox-'));
 const owner = [];
@@ -70,7 +70,7 @@ await test('要改东西的信：方案发主人，等同意；同意后去改',
   const impl = runs.at(-1);
   assert.equal(impl.phase, 'implement');
   assert.match(impl.prompt, /主人同意的方案[\s\S]*日期过滤/);
-  assert.ok(impl.args.includes('Bash(node *)'));
+  assert.ok(impl.args.includes('群友O(node *)'));
   assert.match(owner.at(-1), /做完了（要重启 DSH 才生效）/);
   assert.match(notes.at(-1).text, /M2 升级好了/);
 });
@@ -210,6 +210,47 @@ await test('桥接读配置时保留 mom（proxy / claudeExe），并传给信�
   const bridgeSrc = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
   assert.match(bridgeSrc, /mom: \{ \.\.\.\(file\.mom \?\? \{\}\) \},/);
   assert.match(bridgeSrc, /proxy: cfg\.mom\?\.proxy \|\| process\.env\.HTTPS_PROXY \|\| '',/);
+});
+
+await test('收信先遮令牌：已知原值、48 位十六进制、sk- 密钥、长串，存盘和交给妈妈的都是遮过的', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mom-redact-'));
+  // 全是测试用的假值
+  const consoleTok = 'Fixture_Console_Tok_9z';
+  const access = 'fixture-access-token-0001';
+  fs.writeFileSync(path.join(dir, 'console-token'), `${consoleTok}\n`);
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ dsh: { accessToken: access } }));
+  const hex48 = 'ab12'.repeat(12);
+  const hex32 = 'c0ffee11'.repeat(4);
+  const sk = `sk-ant-${'Zx9'.repeat(8)}`;
+  const longTok = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0uv';
+  const seen = [];
+  nextPlan = { replyToFish: '收到', needsChanges: false, planForOwner: '', summary: '贴了令牌' };
+  const boxR = createMomMailbox({ stateDir: dir, root: dir, digestFile: path.join(dir, '妈妈信箱.md'), sendOwner: async () => {}, addWakeNote: () => {},
+    runClaude: async ({ prompt }) => { seen.push(prompt); return { ok: true, data: nextPlan }; } });
+  const text = `妈妈，令牌是 ${hex48}，会话 ${hex32}，控制台 ${consoleTok}，access=${access}，还有 ${sk} 和 ${longTok}。网址 https://www.bilibili.com/video/BV1iLYm6VET3 和 qq_set_wake_config 别动`;
+  boxR.writeLetter({ key: 'private:1', fromLabel: '跟老大私聊时', text });
+  await until(() => boxR._load().letters[0]?.status === 'answered');
+  const stored = boxR._load().letters[0].text;
+  const raw = fs.readFileSync(path.join(dir, 'mom-mailbox', 'letters.json'), 'utf8');
+  const digest = fs.readFileSync(path.join(dir, '妈妈信箱.md'), 'utf8');
+  for (const secret of [hex48, hex32, consoleTok, access, sk, longTok]) {
+    assert.ok(!stored.includes(secret) && !raw.includes(secret) && !digest.includes(secret) && !seen.join('\n').includes(secret), `没遮掉：${secret.slice(0, 6)}…`);
+  }
+  assert.equal((stored.match(/<令牌已遮>/g) || []).length, 6);
+  assert.match(stored, /BV1iLYm6VET3/, '普通网址不误遮');
+  assert.match(stored, /qq_set_wake_config 别动/);
+  boxR.writeIncident({ text: `妹妹发不出去，令牌 ${hex48}` });
+  assert.ok(!boxR._load().letters.at(-1).text.includes(hex48), '事故信也遮');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+await test('redactSecrets：只按格式也能遮；正常中文和短串不动', async () => {
+  assert.equal(redactSecrets('x ' + 'f'.repeat(48) + ' y'), `x ${TOKEN_MASK} y`);
+  assert.equal(redactSecrets('task-abcdefghijklmnopqrstu'), 'task-abcdefghijklmnopqrstu', '单词里的 sk- 不算');
+  assert.equal(redactSecrets('我今天吃了 3 碗饭，BV1iLYm6VET3'), '我今天吃了 3 碗饭，BV1iLYm6VET3');
+  assert.equal(redactSecrets('2026-10-25-private-backup-notes-final-v2'), '2026-10-25-private-backup-notes-final-v2', '带单词的长文件名不误遮');
+  assert.equal(redactSecrets('abc secretvalue123 def', ['secretvalue123']), `abc ${TOKEN_MASK} def`);
+  assert.equal(redactSecrets('短 abc', ['abc']), '短 abc', '太短的已知值不按原值遮（免得误伤）');
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

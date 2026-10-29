@@ -246,9 +246,9 @@
       "unreadLimit": 30,
       "contextWindow": 20,
       "inlineWakeMessages": true,
-      "wakeMessageLimit": 12,
+      "wakeMessageLimit": 30,
       "wakeRecentLimit": 4,
-      "wakeMaxChars": 6000
+      "wakeMaxChars": 14000
     },
     "initialPromptMaxChars": 2000,
     "media": {
@@ -267,5 +267,13 @@
     "maxTokens": 4096,
     "maxResults": 8,
     "timeoutMs": 35000
+  },
+  "hormones": {
+    "_说明": "激素影子记录（只记录、不触发任何行为，她看不到）：false 就不记。personaFile 可换抖音人格资料的位置（默认 ~/.dsh/douyin-browser/memory/persona/state.json）。",
+    "enabled": true
+  },
+  "chatLog": {
+    "_说明": "每条收到、发出的消息写进 家/小鲸鱼/聊天记录/，给她的索引用：false 就不写。",
+    "enabled": true
   }
 }

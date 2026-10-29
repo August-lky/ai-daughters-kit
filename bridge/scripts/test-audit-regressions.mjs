@@ -158,9 +158,11 @@ await test('R4 timeout/replyCheck 类暂存唤醒按定时器语义补发', asyn
     const text = h.calls.prompts[0].content.map((c) => String(c?.text ?? '')).join('\n');
     assert.match(text, /有限潜水时间已到|睡眠时间已到/);
 
-    // 第二条 @ 与未读无关但对应消息已被处理 → 仍然按消息语义跳过
-    const second = h.replayPendingWakeReasonsV2('group:456');
-    assert.equal(second?.action, 'skipped', '已被当前回合处理的消息类唤醒仍然跳过');
+    // 2026-10-29（刷屏提速）：一次把暂存的全部看完（以前一个回合只补一条，要调两次才轮到第二条）；
+    // 同一次里的 @ 对应消息已被处理 → 仍然按消息语义跳过，没有再多出一次唤醒，队列清空
+    assert.equal(result.merged, 0, '已处理的 @ 不并进唤醒');
+    assert.equal(st.pendingWakeReasons.length, 0, '一次看完，队列清空');
+    assert.equal(h.replayPendingWakeReasonsV2('group:456'), null, '队列空了再调就什么都没有');
   } finally { await h.close(); }
 });
 

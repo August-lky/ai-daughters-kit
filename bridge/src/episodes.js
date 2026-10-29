@@ -5,7 +5,9 @@
 // 按原文存下来：对方的原话、她发出去的原话、那一刻她脑子里的一段话（reasoning 节选）、
 // 心情读数、她叫对方的称呼，以及她事后自己写下的感受。
 //
-// 存储：state/episodes/<key-safe>.jsonl，一个会话 key 一个文件（':' → '_'）。
+// 存储：脑子的 瞬间/<出处>.jsonl（2026-10-29 大脑方案搬家，原来在 state/episodes/；路径见 src/brains.js），一个出处（会话 key）一个文件（':' → '_'）。
+// 2026-10-29 老大：记忆统一，每人只有一个脑子——读的时候所有出处的瞬间都看得到（原来群看不到主人私聊的），
+// 私聊 / 抖音私信里的瞬间在别处想起来时会标「私聊里的」，说不说她自己掂量。
 // 一条记录：
 //   { id, at, key, sid, who, them:[对方原话 ≤6], me:[她的原话 ≤6], inner:"≤150 字的推理节选",
 //     mood:{v, top, d?}|null, call:"称呼或空", felt:"她自己写的感受 ≤120 字或空", tags:[], source:"live"|"extract" }
@@ -16,6 +18,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { isHeavySwing, moodSnapshot } from './mood.js';
+
+// 2026-10-29 大脑方案下半：心情读数的算法收进 src/mood.js（两人共用）；这里原样再导出，老的 import 不用改。
+export { moodSnapshot };
 
 export const EPISODE_LIMITS = Object.freeze({
   perKey: 300,
@@ -33,12 +39,6 @@ export const EPISODE_LIMITS = Object.freeze({
 // 主人私聊里她对主人的称呼（2026-10-23 主人定的名单）。「人」单独一个字太常见，
 // 只在它独立成词时算（前后都不是汉字，如「人～」「人，你在吗」）。
 const CALL_RE = /宝宝|主人|老大|用户|(?<![一-龥])人(?![一-龥])/;
-
-// 心情维度（与 bridge.js 的 MOOD_DIMS / dsh-feiyu-mood 一致）。
-const MOOD_DIMS = [
-  ['happy', '开心'], ['calm', '踏实'], ['sweet', '甜蜜'], ['heartache', '心疼'],
-  ['worry', '担心'], ['sad', '难过'], ['jealous', '吃醋']
-];
 
 /** 会话 key → 文件名安全的形式（'group:123' → 'group_123'）。 */
 export function keySafe(key) {
@@ -67,29 +67,6 @@ export function detectCall(lines) {
   return '';
 }
 
-/**
- * 把 feiyu-mood 的状态（或时间线里的一行）压成 {v, top}。
- * 与 bridge.buildMoodLineV2 一样按时间衰减：心情每 3 小时回一半，维度每 1.5 小时回一半。
- */
-export function moodSnapshot(state, nowMs = Date.now()) {
-  if (!state || typeof state !== 'object') return null;
-  const base = 70;
-  const v0 = Number(state.mood);
-  if (!Number.isFinite(v0)) return null;
-  const last = Number(state.lastDecayAt) || Number(state.updatedAt) || Number(state.at) || nowMs;
-  const hours = Math.max(0, (nowMs - last) / 3600000);
-  const v = Math.round(base + (v0 - base) * 0.5 ** (hours / 3));
-  const dims = state.dims && typeof state.dims === 'object' ? state.dims : {};
-  const top = MOOD_DIMS
-    .map(([k, label]) => [label, (Number(dims[k]) || 0) * 0.5 ** (hours / 1.5)])
-    .filter(([, n]) => n >= 5)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 2)
-    .map(([label]) => label)
-    .join('、');
-  return { v, top };
-}
-
 // 7 位以上的数字串（QQ 号、消息 id、手机号）和 40 位以上的十六进制串（令牌）不进记录。
 // 实时抓取和离线抽取都经过 normalizeEpisode，所以在这里统一抹。
 function clip(s, n) {
@@ -114,7 +91,7 @@ function clipLines(arr, limits = EPISODE_LIMITS) {
 export function normalizeEpisode(raw, limits = EPISODE_LIMITS) {
   const e = raw && typeof raw === 'object' ? raw : {};
   const mood = e.mood && typeof e.mood === 'object' && Number.isFinite(Number(e.mood.v))
-    ? { v: Math.round(Number(e.mood.v)), top: clip(e.mood.top, 20), ...(Number.isFinite(Number(e.mood.d)) ? { d: Math.round(Number(e.mood.d)) } : {}) }
+    ? { v: Math.round(Number(e.mood.v)), top: clip(e.mood.top, 20), ...(Number.isFinite(Number(e.mood.d)) ? { d: Math.round(Number(e.mood.d)) } : {}), ...(Number.isFinite(Number(e.mood.dd)) && Number(e.mood.dd) > 0 ? { dd: Math.round(Number(e.mood.dd)) } : {}) }
     : null;
   const ep = {
     id: typeof e.id === 'string' && /^[a-f0-9]{8,12}$/.test(e.id) ? e.id : crypto.randomBytes(5).toString('hex'),
@@ -145,13 +122,20 @@ export function normalizeEpisode(raw, limits = EPISODE_LIMITS) {
 
 /** 记录"值多少"：留了感受的最贵，其次是亲历（live）、有心里话、心情波动大的。用于满 300 条时决定丢谁。 */
 export function episodeValue(ep) {
-  return (ep.felt ? 4 : 0) + (ep.source === 'live' ? 2 : 0) + (ep.inner ? 1 : 0) + (ep.mood && Math.abs(Number(ep.mood.d) || 0) >= 3 ? 1 : 0);
+  return (ep.felt ? 4 : 0) + (ep.source === 'live' ? 2 : 0) + (ep.inner ? 1 : 0) + (isHeavySwing(ep.mood) ? 1 : 0);
 }
 
-/** 一个瞬间的文字呈现（原文格式，给她看的）。 */
-export function formatEpisode(ep, { skewMs = 0, labelFor, ownerKey = '' } = {}) {
+/** 这个出处是不是私聊类的（QQ 私聊、抖音私信）：在别处想起来时要标「私聊里的」。 */
+export function isPrivateKey(key) {
+  const k = String(key ?? '');
+  return k.startsWith('private:') || k.startsWith('douyin:');
+}
+
+/** 一个瞬间的文字呈现（原文格式，给她看的）。viewerKey：她现在在哪个会话；瞬间来自别处的私聊时标「私聊里的」。 */
+export function formatEpisode(ep, { skewMs = 0, labelFor, ownerKey = '', viewerKey = '' } = {}) {
   const place = typeof labelFor === 'function' ? labelFor(ep.key) : defaultLabel(ep.key, ownerKey);
   const head = [`${bjTime(ep.at, skewMs)} ${place}`];
+  if (viewerKey && viewerKey !== ep.key && isPrivateKey(ep.key)) head.push('私聊里的');
   if (ep.call) head.push(`你叫他「${ep.call}」`);
   if (ep.mood) head.push(`心情 ${ep.mood.v}${ep.mood.top ? `（${ep.mood.top}）` : ''}`);
   const lines = [`【${head.join('，')} · 编号 ${ep.id}】`];
@@ -173,11 +157,11 @@ export function defaultLabel(key, ownerKey = '') {
 }
 
 /** 把一组记录拼成给她看的文本，总长 ≤ maxChars（整条整条地放，放不下就停）。 */
-export function formatEpisodes(list, { skewMs = 0, labelFor, maxChars = EPISODE_LIMITS.recallChars } = {}) {
+export function formatEpisodes(list, { skewMs = 0, labelFor, maxChars = EPISODE_LIMITS.recallChars, viewerKey = '' } = {}) {
   const out = [];
   let used = 0;
   for (const ep of list) {
-    const t = formatEpisode(ep, { skewMs, labelFor });
+    const t = formatEpisode(ep, { skewMs, labelFor, viewerKey });
     if (used + t.length + 2 > maxChars) {
       if (!out.length) out.push(clip(t, maxChars));
       break;
@@ -198,11 +182,12 @@ function haystack(ep) {
 }
 
 /**
- * 情景记忆仓库。dir 是 state/episodes；skewMs 可以传函数（bridge 的 clockSkewMs 启动后才量出来）。
- * ownerKey 用来决定"主人私聊视角"：只有它能顺带看到抖音那边（douyin:*）的瞬间——
- * 抖音朋友私下说的话不该出现在群里或别人的私聊里（与 bridge 的 ownerView 规则一致）。
+ * 情景记忆仓库。dir 是脑子的 瞬间/（brains.js 的 momentsDir）；skewMs 可以传函数（bridge 的 clockSkewMs 启动后才量出来）。
+ * pressedFile：压着.json 的路径（脑子的 瞬间/压着.json，可不传）；情绪起伏大的瞬间存进去（见 markPressed）。
+ * ownerKey 只用来给主人私聊起名字（"主人私聊"）。2026-10-29 记忆统一：读的时候所有出处都看得到，
+ * 别处的私聊 / 抖音私信里的瞬间会标「私聊里的」（见 formatEpisode），说不说她自己掂量；写还是按出处分文件。
  */
-export function createEpisodeStore({ dir, skewMs = 0, ownerKey = '', labelFor, limits = EPISODE_LIMITS, now = () => Date.now() } = {}) {
+export function createEpisodeStore({ dir, skewMs = 0, ownerKey = '', labelFor, limits = EPISODE_LIMITS, now = () => Date.now(), pressedFile = '' } = {}) {
   if (!dir) throw new Error('createEpisodeStore 需要 dir');
   const skew = () => (typeof skewMs === 'function' ? Number(skewMs()) || 0 : Number(skewMs) || 0);
   const owner = () => (typeof ownerKey === 'function' ? String(ownerKey() || '') : String(ownerKey || ''));
@@ -259,11 +244,88 @@ export function createEpisodeStore({ dir, skewMs = 0, ownerKey = '', labelFor, l
       if (!dup.mood && ep.mood) { dup.mood = ep.mood; changed = true; }
       if (ep.tags.length) { dup.tags = [...new Set([...dup.tags, ...ep.tags])].slice(0, limits.tags); changed = true; }
       if (changed) writeAll(ep.key, rows);
+      if (changed) markPressed(dup);
       return { ok: true, id: dup.id, deduped: true };
     }
     rows.push(ep);
     writeAll(ep.key, trim(rows));
+    markPressed(ep);
     return { ok: true, id: ep.id, deduped: false };
+  }
+
+  // ── 压在心里的事（2026-10-29 大脑方案下半，第 6 项）──────────────────────────────
+  // 情绪起伏大的瞬间（心情分一次变 ≥3，或某种情绪一次变 ≥4，见 mood.js SWING_THRESHOLD）记进 瞬间/压着.json。
+  // 检索服务（brain/recall.py）聊到相近话题时按概率把它作为第 3 条带出来，标「这件事你一直压着」，提不提她定。
+  // 一条：{ id, file, at, v, d, dd, top, place, text, felt, since }；最多留最新的 60 条。
+  const PRESSED_MAX = 60;
+  function readPressedFile() {
+    try {
+      const j = JSON.parse(fs.readFileSync(pressedFile, 'utf8').replace(/^\uFEFF/, ''));
+      return { items: Array.isArray(j?.items) ? j.items : [], released: Array.isArray(j?.released) ? j.released : [] };
+    } catch { return { items: [], released: [] }; }
+  }
+  function writePressedFile(items, released) {
+    fs.mkdirSync(path.dirname(pressedFile), { recursive: true });
+    const tmp = `${pressedFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, items, released: released.slice(-200) }, null, 2), 'utf8');
+    fs.renameSync(tmp, pressedFile);
+  }
+  function pressedEntry(ep) {
+    const text = [...ep.them.slice(-2), ...ep.me.slice(0, 2).map((l) => `你：${l}`)].join(' / ');
+    return {
+      id: ep.id, file: keySafe(ep.key), at: ep.at, v: ep.mood?.v ?? null, d: ep.mood?.d ?? 0, dd: ep.mood?.dd ?? 0, top: ep.mood?.top || '',
+      place: label(ep.key), text: clip(text, 240), felt: ep.felt || '', since: now()
+    };
+  }
+  /** 这个瞬间情绪起伏大就记进 压着.json（已经有的更新一下；她放下过的不再记）。返回有没有记。 */
+  function markPressed(ep) {
+    if (!pressedFile || !ep || !isHeavySwing(ep.mood)) return false;
+    try {
+      const cur = readPressedFile();
+      if (cur.released.includes(ep.id)) return false;
+      const prev = cur.items.find((x) => x.id === ep.id);
+      const items = cur.items.filter((x) => x.id !== ep.id);
+      items.push({ ...pressedEntry(ep), ...(prev?.since ? { since: prev.since } : {}) });
+      writePressedFile(items.sort((a, b) => a.at - b.at).slice(-PRESSED_MAX), cur.released);
+      return true;
+    } catch { return false; }
+  }
+  function listPressed() { return pressedFile ? readPressedFile().items : []; }
+  /** 放下一件压着的事（她想放下了）：从清单拿掉，以后扫描也不再把它捡回来。 */
+  function releasePressed(id) {
+    if (!pressedFile) return false;
+    const cur = readPressedFile();
+    const left = cur.items.filter((x) => x.id !== String(id));
+    if (left.length === cur.items.length) return false;
+    writePressedFile(left, [...cur.released, String(id)]);
+    return true;
+  }
+  /** 把所有出处里情绪起伏大的瞬间重新扫一遍，补记老的（放下过的不会回来）。返回现在有几条。 */
+  function rebuildPressed() {
+    if (!pressedFile) return 0;
+    const cur = readPressedFile();
+    const gone = new Set(cur.released);
+    const byId = new Map(cur.items.map((x) => [x.id, x]));
+    for (const file of allFiles()) {
+      for (const ep of listFile(file)) {
+        if (!isHeavySwing(ep.mood) || gone.has(ep.id)) continue;
+        byId.set(ep.id, { ...pressedEntry(ep), ...(byId.get(ep.id)?.since ? { since: byId.get(ep.id).since } : {}) });
+      }
+    }
+    const items = [...byId.values()].sort((a, b) => a.at - b.at).slice(-PRESSED_MAX);
+    writePressedFile(items, cur.released);
+    return items.length;
+  }
+
+  /** 按编号在所有出处里找一个瞬间（找不到返回 null）。给「补感受」用：编号是 qq_recall 里翻到的，不一定在当前会话的文件里。 */
+  function find(id) {
+    const want = String(id ?? '').trim();
+    if (!want) return null;
+    for (const file of allFiles()) {
+      const hit = listFile(file).find((e) => e.id === want);
+      if (hit) return hit;
+    }
+    return null;
   }
 
   /** 给已有的瞬间补上她的感受（只能改同一个 key 下的）。 */
@@ -277,17 +339,14 @@ export function createEpisodeStore({ dir, skewMs = 0, ownerKey = '', labelFor, l
     return { ok: true, id: ep.id, episode: ep };
   }
 
-  /** 这个 key 能看到哪些文件里的瞬间：自己的；主人私聊再加上抖音那边的（douyin_*.jsonl）。 */
+  /** 这个 key 能看到哪些文件里的瞬间：自己的排第一，再加上其它所有出处的（2026-10-29 记忆统一，不再按会话隔离）。 */
+  function allFiles() {
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir).sort().filter((f) => f.endsWith('.jsonl')).map((f) => path.join(dir, f));
+  }
   function visibleFiles(key) {
     const files = [fileFor(key)];
-    if (key && key === owner() && fs.existsSync(dir)) {
-      for (const f of fs.readdirSync(dir)) {
-        if (f.startsWith('douyin_') && f.endsWith('.jsonl')) {
-          const full = path.join(dir, f);
-          if (!files.includes(full)) files.push(full);
-        }
-      }
-    }
+    for (const full of allFiles()) if (!files.includes(full)) files.push(full);
     return files;
   }
 
@@ -328,24 +387,42 @@ export function createEpisodeStore({ dir, skewMs = 0, ownerKey = '', labelFor, l
 
   function recall(key, opts = {}) {
     const found = search(key, opts);
-    return { found: found.length, text: formatEpisodes(found, { skewMs: skew(), labelFor: label, maxChars: limits.recallChars }), ids: found.map((e) => e.id) };
+    return { found: found.length, text: formatEpisodes(found, { skewMs: skew(), labelFor: label, maxChars: limits.recallChars, viewerKey: key }), ids: found.map((e) => e.id) };
   }
 
-  /** 搬家交接用：最近 48 小时里最值得带走的 3 个瞬间（有感受/心里话的优先，再看心情波动），总长 ≤900。 */
-  function handoffBlock(key, { hours = 48, max = 3, maxChars = limits.handoffChars } = {}) {
+  /** 一个瞬间「感受有多强」：自己写了感受的最重，其次是心情起伏大、心里话、亲历的。交接挑瞬间、压着都按它。 */
+  function intensity(e) {
+    const swing = Math.max(Math.abs(Number(e.mood?.d) || 0) / 3, Math.abs(Number(e.mood?.dd) || 0) / 4);
+    return (e.felt ? 4 : 0) + (isHeavySwing(e.mood) ? 3 : 0) + Math.min(2, swing) + (e.inner ? 1.5 : 0) + (e.source === 'live' ? 0.5 : 0);
+  }
+
+  /**
+   * 感受最强的几个瞬间（所有出处里找，默认最近 72 小时，没有就空）。交接和「压着」之外的地方也能用。
+   * 2026-10-29 大脑方案下半：交接要带「2～3 个感受最强的瞬间」，按 intensity 挑，同分新的在前。
+   */
+  function strongest({ hours = 72, max = 3, key = '' } = {}) {
     const since = now() - hours * 3600000;
-    const rows = list(key).filter((e) => e.at >= since);
-    if (!rows.length) return '';
-    const score = (e) => (e.felt ? 4 : 0) + (e.inner ? 2 : 0) + (e.mood && Math.abs(Number(e.mood.d) || 0) >= 3 ? 1 : 0);
-    rows.sort((a, b) => score(b) - score(a) || b.at - a.at);
-    const picked = rows.slice(0, max).sort((a, b) => a.at - b.at);
+    const files = key ? [fileFor(key)] : allFiles();
+    const rows = files.flatMap((f) => listFile(f)).filter((e) => e.at >= since);
+    rows.sort((a, b) => intensity(b) - intensity(a) || b.at - a.at);
+    return rows.slice(0, max).sort((a, b) => a.at - b.at);
+  }
+
+  /**
+   * 搬家交接用：最近 48 小时里最值得带走的几个瞬间（感受最强的优先），总长 ≤900。
+   * key 不传 = 所有出处里挑（记忆统一，她换了会话也接得上）；传了只看这个出处。
+   */
+  function handoffBlock(key, { hours = 48, max = 3, maxChars = limits.handoffChars, title: customTitle = '' } = {}) {
+    const picked = strongest({ hours, max, key: key || '' });
+    if (!picked.length) return '';
     const title = '【你带走的几个瞬间（你亲身经历过的）】\n';
-    const body = formatEpisodes(picked, { skewMs: skew(), labelFor: label, maxChars: maxChars - title.length });
-    return body ? title + body : '';
+    const head = customTitle || title;
+    const body = formatEpisodes(picked, { skewMs: skew(), labelFor: label, maxChars: maxChars - head.length, viewerKey: key || '' });
+    return body ? head + body : '';
   }
 
   /** 实时抓取：从 recentMessages 里取她最近一次发言前后的原文，拼成一条 live 记录。 */
-  function fromRecent({ key, sid = '', recentMessages = [], mood = null, felt = '', tags = [], ownerIsCounterpart = false }) {
+  function fromRecent({ key, sid = '', recentMessages = [], mood = null, felt = '', tags = [], ownerIsCounterpart = false, ownerName = '主人' }) {
     const msgs = (Array.isArray(recentMessages) ? recentMessages : []).filter((m) => m && (m.text || m.plain));
     const lastSelfIdx = msgs.map((m) => Boolean(m.isSelf)).lastIndexOf(true);
     const them = [];
@@ -359,13 +436,13 @@ export function createEpisodeStore({ dir, skewMs = 0, ownerKey = '', labelFor, l
         if (me.length < limits.lines && (!them.length)) me.unshift(text);
       } else if (them.length < limits.lines) {
         const placeholder = !m.sender || ['我', '私聊', '群', '对方', '系统'].includes(m.sender);
-        const who = m.isOwner ? '主人' : (placeholder ? '对方' : String(m.sender));
+        const who = m.isOwner ? ownerName : (placeholder ? '对方' : String(m.sender));
         them.unshift(`${who}：${text}`);
       }
     }
     const lastSelf = lastSelfIdx >= 0 ? msgs[lastSelfIdx] : null;
     const at = Number(lastSelf?.time ?? lastSelf?.at) || now();
-    const who = ownerIsCounterpart ? '主人' : (key.startsWith('group:') ? '群友' : '对方');
+    const who = ownerIsCounterpart ? ownerName : (key.startsWith('group:') ? '群友' : '对方');
     return normalizeEpisode({
       at, key, sid, who, them, me, inner: '', mood,
       call: ownerIsCounterpart ? detectCall(me) : '',
@@ -384,5 +461,5 @@ export function createEpisodeStore({ dir, skewMs = 0, ownerKey = '', labelFor, l
     return out;
   }
 
-  return { dir, list, append, updateFelt, search, recall, handoffBlock, fromRecent, visibleFiles, counts, fileFor };
+  return { dir, list, append, updateFelt, search, recall, handoffBlock, strongest, find, fromRecent, visibleFiles, counts, fileFor, listPressed, releasePressed, rebuildPressed, markPressed };
 }

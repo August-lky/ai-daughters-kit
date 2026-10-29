@@ -1,12 +1,12 @@
 {
   "enabled": true,
-  "selfQQ": 10069,
-  "fishQQ": 10068,
-  "ownerQQ": 10050,
+  "selfQQ": 10075,
+  "fishQQ": 10074,
+  "ownerQQ": 10051,
   "snowlumaConfigDir": "E:/SnowLuma/config",
   "claudeExe": "auto",
   "model": "claude-opus-5-5",
-  "effort": "medium",
+  "effort": "high",
   "limits": {
     "convosPerDay": 0,
     "roundsPerConvo": 0,
@@ -17,7 +17,7 @@
     "ownerProactivePerDay": 0
   },
   "proxy": "http://127.0.0.1:7897",
-  "weeklyStopAt": 1.01,
+  "weeklyStopAt": 0.98,
   "shareWatching": true,
   "groups": [
     10008,
@@ -25,25 +25,20 @@
     10019
   ],
   "groupDebounceSec": 2,
+  "groupMaxWaitSec": 8,
+  "groupMaxImages": 1,
   "debounceSecBy": {
     "owner": 2.5,
     "fish": 3.5
   },
-  "replyEffort": "low",
+  "replyEffort": "medium",
   "groupAliases": {
     "10019": "小房子"
   },
   "houseGroups": [
     10019
   ],
-  "slowGroups": {
-    "10020": {
-      "minWakeGapSec": 120,
-      "maxLines": 2,
-      "debounceSec": 15,
-      "lurkGapMin": 60
-    }
-  },
+  "slowGroups": {},
   "houseTiming": {
     "fishBatchSec": 10,
     "fishOwnerBatchSec": 4,
@@ -51,7 +46,40 @@
     "sisterDebounceSec": 5,
     "sisterMaxWaitSec": 30,
     "sisterMinGapSec": 12,
-    "sisterOwnerYieldSec": 15,
-    "sisterAfterFishSec": 4
+    "sisterOwnerYieldSec": 3,
+    "sisterAfterFishSec": 4,
+    "sisterFishQuietSec": 6
+  },
+  "lineGap": {
+    "baseMs": 400,
+    "perCharMs": 30,
+    "maxMs": 3500
+  },
+  "rotateAtMB": 15,
+  "rotateIdleMin": 3,
+  "pokeOthers": false,
+  "hormones": {
+    "enabled": true
+  },
+  "houseEffort": "low",
+  "groupEffort": "low",
+  "lurkEffort": "low",
+  "rotateAtTokens": 75000,
+  "lurkMaxImages": 1,
+  "costGuard": {
+    "maxUsdPerTurn": 1.5
+  },
+  "qzoneDaily": {
+    "enabled": true,
+    "times": [
+      {
+        "hour": 21,
+        "minute": 50
+      }
+    ],
+    "graceMin": 150
+  },
+  "sleepyLine": {
+    "enabled": true
   }
 }

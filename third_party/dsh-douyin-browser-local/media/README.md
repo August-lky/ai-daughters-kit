@@ -18,7 +18,7 @@
 
 统一入口是 `index.mjs` 的 `MediaAdapter`。没有整体安装三个上游插件；原插件的 DSH SDK、UI、TTS、自动录音和插件更新器不随之加载。工具输出由刷视频项目适配当前 DSH 0.1.5-rc.2 的 JSON 合同。
 
-MiMo 原来通过 Git Bash 包装驱动；这里以 `spawn(..., {shell:false})` 直接启动 Python，使用标准输入传递不含凭据的请求规格。驱动只构造请求正文，MiMo 网络请求由 Node 发起。MiniMax ASR 请求直接使用 Node `fetch`，未沿用旧 shell 管线。桌面软件保存媒体 Key 的原子文件写入是另一条用户设置流程，不把 Key 交给 Python 驱动。
+MiMo 原来通过 Git 群友O 包装驱动；这里以 `spawn(..., {shell:false})` 直接启动 Python，使用标准输入传递不含凭据的请求规格。驱动只构造请求正文，MiMo 网络请求由 Node 发起。MiniMax ASR 请求直接使用 Node `fetch`，未沿用旧 shell 管线。桌面软件保存媒体 Key 的原子文件写入是另一条用户设置流程，不把 Key 交给 Python 驱动。
 
 媒体先用现有 `ffprobe` 核对音轨、视频轨与时长，再用 `ffmpeg` 提取指定片段。默认上限是 25 MiB、120 秒，云答复最多 1024 token。转写音频还会核对输出 WAV 的实测时长。浏览器 MediaRecorder 生成的本地 WebM 可能没有容器总时长；这一路只允许音频处理，用 `-t` 限定转码，成功后返回 `sourceDurationSeconds:null` 和 `durationVerifiedBy:'ffprobe-output'`，不会把请求秒数当成测量结果。视频片段的 `durationSeconds` 表示根据源时长限定的请求区间，编码后的帧边界可能有取整。
 

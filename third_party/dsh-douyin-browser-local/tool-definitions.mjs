@@ -93,7 +93,7 @@ export const TOOL_DEFINITIONS = [
     parameters:{type:'object',properties:{recipientId:{type:'string',minLength:1,maxLength:500,description:'由douyin_chat_contacts返回的精确本机联系人ID。'}},required:['recipientId'],additionalProperties:false},
   },
   {
-    name:'douyin_chat_observe',description:'读取许可名单内指定表情或分享卡片的实际画面；分享视频只在允许的刷视频时间内采样，不能把封面当成看完整条作品。',
+    name:'douyin_chat_observe',description:'读取许可名单内指定表情或群友148的实际画面；分享视频只在允许的刷视频时间内采样，不能把封面当成看完整条作品。',
     parameters:{type:'object',properties:{recipientId:{type:'string',minLength:1,maxLength:500},messageId:{type:'string',minLength:1,maxLength:80}},required:['recipientId','messageId'],additionalProperties:false},
   },
   {name:'douyin_video_limits_status',description:'读取自定义刷视频时间段、单轮时长及剩余时间。开始新一轮只能由用户在控制台或CLI操作。',parameters:empty()},

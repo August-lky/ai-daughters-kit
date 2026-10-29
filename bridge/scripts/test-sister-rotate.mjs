@@ -33,7 +33,7 @@ ok('会话文件路径：工作目录的 : \\ / 换成 -');
   assert.equal(handoffBlock({}), '', '什么都没有就不带');
   const b = handoffBlock({ handoff: '答应妹妹明天一起读谱', summary: '昨天看了设定图', recent: [{ who: '老大', lines: ['- 21:00 **老大**：晚安'] }, { who: '小房子', lines: [] }] });
   assert.match(b, /新的一段会话/);
-  assert.match(b, /交接（交接\.md）\]\n答应妹妹明天一起读谱/);
+  assert.match(b, /交接（脑子\/最近\/交接\.md）\]\n答应妹妹明天一起读谱/);
   assert.match(b, /摘要\]\n昨天看了设定图/);
   assert.match(b, /和老大的聊天（原话）\]\n- 21:00/);
   assert.doesNotMatch(b, /小房子/, '没聊过的不带');

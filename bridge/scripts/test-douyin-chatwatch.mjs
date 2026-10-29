@@ -11,7 +11,7 @@ assert.ok(start > 0 && end > start, '找不到 douyinChatIncidentV2');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatwatch-'));
 const make = new Function('fs', 'path', 'DOUYIN_STATE_DIR', 'DOUYIN_RECENT_MS', 'douyinContactV2',
   `${src.slice(start, end)}\nreturn douyinChatIncidentV2;`);
-const incidentAt = make(fs, path, dir, 10 * 60 * 1000, (id) => ({ name: id === 'conv:a' ? '群友33📷' : '' }));
+const incidentAt = make(fs, path, dir, 10 * 60 * 1000, (id) => ({ name: id === 'conv:a' ? '群友236' : '' }));
 const write = (events) => fs.writeFileSync(path.join(dir, 'chat-events.jsonl'), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
 const now = Date.parse('2026-10-24T05:00:00Z');
 const ago = (min) => new Date(now - min * 60000).toISOString();
@@ -34,7 +34,7 @@ assert.equal(incidentAt(now), null); ok('10 分钟以前的旧事不叫');
 
 write([{ at: ago(2), type: 'contact.paused', recipientId: 'conv:a', message: '读取失败' }]);
 i = incidentAt(now);
-assert.equal(i.kind, 'contact_paused'); assert.equal(i.who, '群友33📷'); ok('联系人被暂停 → contact_paused，带名字');
+assert.equal(i.kind, 'contact_paused'); assert.equal(i.who, '群友236'); ok('联系人被暂停 → contact_paused，带名字');
 
 write([{ at: ago(2), type: 'contact.paused', recipientId: 'conv:zzz', message: '读取失败' }]);
 assert.equal(incidentAt(now).who, '某个联系人'); ok('不认识的联系人不露 id');

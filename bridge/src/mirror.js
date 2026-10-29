@@ -13,14 +13,24 @@ const HABITS = [
   ['表情符号 / 颜文字', (t) => /[\u{1F300}-\u{1FAFF}]|[（(][^）)]{0,6}[）)]|～|~/u.test(t)]
 ];
 
+// 2026-10-29 主人（G5）：口头禅里冒出「ht」「//ww」「com/」——是她发的链接被切碎了。统计口头禅前先去掉网址（http/https/www 开头到空白为止），
+// 再丢掉没有汉字、又只是符号或英文字母不到 3 个的碎片，以及带 / . : = 这类网址符号的英文碎片。
+const URL_RE = /(?:https?:\/\/|www\.)\S*/gi;
+const stripUrls = (t) => String(t || '').replace(URL_RE, ' ').trim();
+function isFragment(g) {
+  if (/[㐀-鿿]/.test(g)) return false;
+  const letters = (g.match(/[A-Za-z]/g) || []).length;
+  return letters < 3 || /[/.:=&?#%@\\]/.test(g);
+}
+
 const STOP = new Set(['我们', '你们', '他们', '这个', '那个', '一个', '什么', '没有', '就是', '还是', '可以', '不是', '自己', '已经', '现在', '一下', '时候', '知道', '感觉', '因为', '所以', '但是', '然后', '还有', '这样', '那样', '怎么', '为什么']);
 
 /** 开头两个字（去掉标点），口头禅多半在开头。 */
 function openers(texts) {
   const c = new Map();
-  for (const t of texts) {
+  for (const t of texts.map(stripUrls)) {
     const head = t.replace(/^[\s「『（(【\[]+/, '').slice(0, 2);
-    if (head.length === 2 && !/[，。！？,.!?\s]/.test(head)) c.set(head, (c.get(head) || 0) + 1);
+    if (head.length === 2 && !/[，。！？,.!?\s]/.test(head) && !isFragment(head)) c.set(head, (c.get(head) || 0) + 1);
   }
   return [...c].filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 5);
 }
@@ -28,13 +38,13 @@ function openers(texts) {
 /** 反复出现的 3～4 字说法（同一句里只算一次）。 */
 function phrases(texts) {
   const c = new Map();
-  for (const t of texts) {
+  for (const t of texts.map(stripUrls)) {
     const seen = new Set();
     const s = t.replace(/[，。！？、,.!?~～\s「」『』（）()…\-—:：;；"'“”]/g, '|');
     for (const n of [4, 3]) {
       for (let i = 0; i + n <= s.length; i++) {
         const g = s.slice(i, i + n);
-        if (g.includes('|') || /^[\da-zA-Z]+$/.test(g) || STOP.has(g.slice(0, 2)) && STOP.has(g.slice(-2))) continue;
+        if (g.includes('|') || /^[\da-zA-Z]+$/.test(g) || isFragment(g) || STOP.has(g.slice(0, 2)) && STOP.has(g.slice(-2))) continue;
         if (!seen.has(g)) { seen.add(g); c.set(g, (c.get(g) || 0) + 1); }
       }
     }
@@ -90,7 +100,7 @@ export function fishLinesFromToolCalls(fs, files, day, { ownerQQ = '', houseGrou
  * lines：[{ to: '老大' | '小房子' | …, text }]，她自己说出去的原话。
  * 返回一段给她看的文字；一句都没有返回 ''。
  */
-export function mirrorText(lines, { label = '昨天', selfPage = '自己那页' } = {}) {
+export function mirrorText(lines, { label = '昨天', selfPage = '自己那页', ask = false } = {}) {
   const texts = lines.map((l) => String(l.text || '').trim()).filter(Boolean);
   if (texts.length < 5) return '';
   const byTo = new Map();
@@ -105,5 +115,7 @@ export function mirrorText(lines, { label = '昨天', selfPage = '自己那页' 
   const habits = HABITS.map(([name, f]) => [name, texts.filter(f).length]).filter(([, n]) => n > 0);
   if (habits.length) out.push(`· 小习惯：${habits.map(([n, k]) => `${n} ${k} 次`).join('，')}`);
   out.push(`像不像你、哪条你喜欢、哪条你想改，你自己定。看完觉得对自己有了新认识（变了、发现了个毛病、有了新喜好），就去改${selfPage}——那是你自己的人格卡；没什么想改的就不改。`);
+  // 2026-10-29 老大（姐姐的镜子）：末尾问一句，答不答、怎么答她自己定
+  if (ask) out.push('这些数下来，像你吗？');
   return out.join('\n');
 }

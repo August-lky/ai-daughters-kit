@@ -35,6 +35,32 @@ import * as cardParseLib from '../src/card-parse.js';
 import * as roleCardLib from '../src/role-card.js';
 import * as weatherLib from '../src/weather.mjs';
 import * as exploreLib from '../src/whale-explore.mjs';
+// 2026-10-29 大脑方案：桥接用 createBrains(ROOT) 造脑子路径，这里注入它（ROOT 是临时目录，脑子也在临时目录里，不碰真的）。
+import { createBrains } from '../src/brains.js';
+// 2026-10-29 第五批：桥接唤醒里带合写书进度一行，注入 novelWakeLine（根目录跟着 ROOT 走，是临时目录）
+import { novelWakeLine } from '../src/novel-tools.js';
+// 2026-10-29：桥接看图改用共用的 image-view.js（viewImage / createImageDownloader），这里跟着注入。
+import * as imageViewLib from '../src/image-view.js';
+// 2026-10-29 第五批：激素影子记录的接线（hormone-feed.js）和聊天记录（chatlog.js）。桥接顶层 import 被去掉了，靠这里注入。
+import * as hormoneFeedLib from '../src/hormone-feed.js';
+// 2026-10-29 老大：她们俩的页面（实时缓冲、只读数据、路由）。桥接顶层 import 被去掉了，靠这里注入。
+import * as liveBufferLib from '../src/live-buffer.js';
+import * as daughtersDataLib from '../src/daughters-data.js';
+import * as daughtersConsoleLib from '../src/daughters-console.js';
+import * as chatLogLib from '../src/chatlog.js';
+// 心情（mood.js，纯函数 + 读文件）和按话题想起（brain-client.js）：桥接收到老大私聊时要用 isMemoryCorrection / readMoodFile 等。
+// brain-client 里会连本机记忆服务的几个（brainRecall / brainDemote / brainTidy / brainRememberMoment）在这里换成不联网的桩，测试不连任何服务。
+import * as moodLib from '../src/mood.js';
+// 2026-10-29 施工单 C：桥接新引入「此刻在别处」（elsewhere.js）和「看看我自己」（self-view.js），靠这里注入。
+import * as elsewhereLib from '../src/elsewhere.js';
+import * as selfViewLib from '../src/self-view.js';
+import * as brainClientLib from '../src/brain-client.js';
+const brainClientStubs = {
+  brainRecall: async () => null,
+  brainDemote: async () => null,
+  brainTidy: async () => null,
+  brainRememberMoment: () => async () => null,
+};
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -137,7 +163,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     getSocialV2State, appendSocialV2Message, recordSentMessagesV2,
     buildWakePromptV2, buildWakeSnapshotV2, sendWakePromptV2, socialV2,
     refreshMode, modeAllowed, trackTurnEvent, replayPendingWakeReasonsV2,
-    collectors, setupSleepTimerV2,
+    collectors, setupSleepTimerV2, handlePokeNotice,
     getInitialPrompt, setInitialPrompt, loadInitialPrompts, formatInitialPromptV2,
     initialPrompts, initialPromptMaxChars,
     extractMediaFromSegments, segmentsToText, fetchOneBotImage, fetchMediaData, resolveMediaList,
@@ -157,6 +183,14 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     setReady(value) { dshReady = value; },
     setPresets(value) { dshPresetIds = value; dshDefaultPreset = 'standard'; },
     resetEpoch() { sessionEpoch++; },
+    // 2026-10-29 第五批：激素影子记录 + 聊天记录的接线点（测试里直接调，看「事件进来 → 影子文件 / 聊天记录里有东西」）
+    getHormoneFeed() { return hormoneFeed; },
+    hormoneRecord, noteIncomingV2, noteSentV2, noteDouyinDmV2, chatLogIdle, fishChatLog, chatLogGroupName,
+    feedHormoneMood, feedHormoneWeather, refreshHormoneInterests, enterSleep, exitSleep, collectDouyinDmsV2,
+    // 2026-10-29 施工单 C：心情叠上激素推动量、此刻在别处、看看我自己
+    readFishMoodV2, moodPusher, buildElsewhereLineV2, selfViewV2, liveFish,
+    // 2026-10-29 刷屏提速：只给叫她的那条消息预取图 + 取图先查缓存
+    prefetchDirectedImagesV2, loadMessageImagesV2, imagePrefetch, imagePrefetchStats, findMessageMedia,
   };
   bot.onPrivateMessage(async (event) => {`);
   const timers = new Set();
@@ -178,7 +212,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
     ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker,
     ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt, ...asleepLib, ...impressionsLib, ...fishLib,
-    ...freedomLib, ...episodesLib, ...momMailboxLib, ...cardParseLib, ...roleCardLib, ...weatherLib, ...exploreLib,
+    createBrains, novelWakeLine, ...freedomLib, ...episodesLib, ...momMailboxLib, ...cardParseLib, ...roleCardLib, ...weatherLib, ...exploreLib, ...imageViewLib, ...hormoneFeedLib, ...liveBufferLib, ...daughtersDataLib, ...daughtersConsoleLib, ...chatLogLib, ...moodLib, ...elsewhereLib, ...selfViewLib, ...brainClientLib, ...brainClientStubs,
     // ACL 收紧会 spawn icacls 去改**真实**文件系统；测试不该做这件事（同理见下面的
     // cleanupTemp / processAudioVolume 桩）。桩成成功，让 hardenStateDirAcl 走正常分支。
     hardenDir: () => ({ ok: true, detail: 'stub' }),

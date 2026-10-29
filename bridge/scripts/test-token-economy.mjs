@@ -134,16 +134,18 @@ await test('my-recent returns an existing safe cursor without authorizing unrela
   assert.deepEqual(seqs(st.unread), [1]);
 });
 
-await test('combined close cannot bypass the pre-sleep observation guard', async ({ st, request, append }) => {
-  append('still discussing a normal topic');
-  const read = await request('unread');
-  const before = plain(st.wakeConfig);
+// 2026-10-29 老大：「这个东西应该是做提醒而不是做限制」。原来这里钉的是「没观察完不让收尾」（400）；
+// 现在收尾一律直接成功，水位照常只确认读过的，刚有人说话就在返回里附一句提醒。
+await test('combined close is no longer blocked by pre-sleep observation; it closes and reminds', async ({ st, request, append }) => {
   for (const route of ['mark-read', 'wake-config']) {
+    append(`still discussing a normal topic (${route})`);
+    const read = await request('unread');
     const result = await request(route, { body: { throughSeq: read.data.readThroughSeq, config: DIVING } });
-    assert.equal(result.status, 400);
-    assert.ok(result.data.preSleepWaitRemainingMs > 0);
-    assert.deepEqual(seqs(st.unread), [1]);
-    assert.deepEqual(plain(st.wakeConfig), before);
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+    assert.equal(result.data.ok, true);
+    assert.equal(result.data.markedCount, 1);
+    assert.deepEqual(seqs(st.unread), []);
+    assert.match(String(result.data.hint || ''), /qq_wait_for_messages[\s\S]*不看也行/, 'someone was just talking: success carries a gentle reminder');
   }
 }, { observe: true });
 

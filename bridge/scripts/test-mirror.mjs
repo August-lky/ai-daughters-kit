@@ -28,6 +28,20 @@ assert.equal(mirrorText([{ to: '老大', text: '嗯' }]), '', '太少不照');
   ok('镜子：句数、跟谁、口头禅、小习惯；首尾错开的说法合并');
 }
 {
+  // 2026-10-29 G5：她发的链接不能被切成「ht」「//ww」「com/」当口头禅
+  const lines = [
+    ...Array.from({ length: 5 }, (_, i) => ({ to: '小房子', text: `https://www.bilibili.com/video/BV1iLYm6VE${i}a 这个好看` })),
+    ...Array.from({ length: 4 }, (_, i) => ({ to: '老大', text: `www.example.com/p/${i} 老大看看` })),
+    ...Array.from({ length: 4 }, () => ({ to: '老大', text: 'ok ok' }))
+  ];
+  const m = mirrorText(lines);
+  const said = m.split('\n').filter((l) => /最常这样开头|反复说的/.test(l)).join('\n');
+  assert.doesNotMatch(said, /「ht」|「ww」|\/\/|com\/|「ok」|「tt|「tp|「\.c/, `链接碎片 / 短英文不算口头禅：\n${said}`);
+  assert.match(said, /「这个好看」5 次/, '链接后面真说的话照样数');
+  assert.match(said, /「老大看看」4 次/);
+  ok('镜子：去掉网址和链接碎片再数口头禅');
+}
+{
   const s = sisterLinesFromChatlog(fs, 'E:/qq-bridge/sister/聊天记录', '2026-10-25');
   assert.ok(s.length > 50, '姐姐 10-25 的话取得到');
   assert.ok(s.every((l) => !/^[（(]/.test(l.text)), '动作（括号开头）不算');

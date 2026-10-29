@@ -1,0 +1,979 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>大脑</title>
+<!--
+  2026-10-29 大脑页面（施工单 B，2D 版）：把两个女儿的脑子画成一张平面的「点和线」，WebGL 渲染，全量显示。
+  老大说「3D 容易卡，改 2D，以流畅度优先，内容要全面」，所以这一版取代了 3D 版（3D 版备份在 brain.html.bak-3d，要回退就拷回来）。
+  数据：/api/brain/graph?brain=whale|sister&limit=0（0 = 全部；桥接只读代理 → 记忆服务 /graph）；点开一个点走 /api/brain/graph/node。
+        带 x-console-token（取法同 console.html：?token= 进来存 localStorage）；桥接上没有这个接口时（开发），回退直连 127.0.0.1:3210。
+        坐标是服务端（brain/graph.py compute_layout）算好的：脑区按人脑侧面轮廓摆，区里重要的靠中心、越新越靠外缘；前端不跑布局。
+  画图：public/vendor/sigma.min.js（sigma 3.0.3，MIT）+ graphology.umd.min.js（0.26.0，MIT），不依赖外网，许可证在同目录 *.LICENSE。
+  桥接的安全头只允许同源脚本，所以脚本用「带令牌的 fetch 取回来、再以内联 script 执行」的方式载入（/vendor/* 要不要令牌都行）。
+  流畅度上做的事：节点和线都在 GPU 里画，拖动缩放只改相机；缩放分级（缩小时只画区圈、区名、重要的点和区内的线，放大逐步出全部）；
+  悬停高亮、刚想起的闪烁、搜索命中都画在叠在上面的 2D 画布上，不触发整图重画。
+-->
+<style>
+:root{
+  --bg:#f6f8f3; --panel:rgba(255,255,255,.92); --ink:#27312c; --muted:#6a766f; --line:#d3dad2; --accent:#2a9d8f;
+  --grid:rgba(60,90,70,.075); --halo:#f6f8f3; --shadow:0 6px 22px rgba(30,50,40,.14); --chip:#eef2ec; --warn:#c0562b;
+}
+:root[data-theme="dark"]{
+  --bg:#0f1514; --panel:rgba(21,29,27,.93); --ink:#dce6e0; --muted:#8a9a92; --line:#2b3935; --accent:#4cc3b3;
+  --grid:rgba(180,220,200,.06); --halo:#0f1514; --shadow:0 6px 22px rgba(0,0,0,.5); --chip:#1c2623; --warn:#ef8a5b;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 "Microsoft YaHei","PingFang SC",system-ui,sans-serif;overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+#app{display:flex;flex-direction:column;height:100%}
+
+/* 顶栏 */
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);z-index:5}
+.bar h1{font-size:16px;margin:0;letter-spacing:.08em}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:4px 12px;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.bar label{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:13px;white-space:nowrap}
+.bar select,.bar input[type=search]{background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 6px}
+.bar select option{color:#222}
+.bar .sp{flex:1}
+.ghost{background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 10px}
+.ghost:hover{border-color:var(--accent)}
+#searchWrap{position:relative}
+#q{width:200px}
+#results{position:absolute;top:30px;left:0;width:360px;max-height:340px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);display:none;z-index:9}
+#results div{padding:5px 10px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px}
+#results div:hover{background:var(--chip)}
+#results small{color:var(--muted)}
+
+/* 舞台 */
+#stage{position:relative;flex:1;min-height:0;background:var(--bg)}
+#panes{position:absolute;top:0;bottom:0;right:0;left:var(--sidew,0);display:flex}
+.pane{position:relative;flex:1;min-width:0;overflow:hidden}
+.pane+.pane{border-left:1px dashed var(--line)}
+.pane canvas.bg{position:absolute;inset:0;pointer-events:none}
+.pane .gv{position:absolute;inset:0}
+.gv.dim canvas.sigma-edges{opacity:.18}
+.gv.dim canvas.sigma-nodes{opacity:.42}
+#fg{position:absolute;inset:0;pointer-events:none;width:100%;height:100%}
+.ptitle{position:absolute;left:12px;top:8px;font-weight:600;pointer-events:none;text-shadow:0 0 6px var(--halo),0 0 6px var(--halo)}
+.ptitle small{font-weight:400;color:var(--muted);margin-left:6px}
+.pload{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);text-align:center;color:var(--muted);max-width:420px;padding:12px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);z-index:3}
+.pload:empty{display:none}
+.pload.err{color:var(--warn)}
+.pload button{margin-top:8px}
+
+/* 悬停提示 */
+#tip{position:fixed;z-index:20;max-width:320px;pointer-events:none;display:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;box-shadow:var(--shadow);font-size:12.5px;line-height:1.5}
+#tip b{font-weight:600}
+#tip span{color:var(--muted)}
+
+/* 左侧图例 */
+#side{position:absolute;left:8px;top:8px;bottom:8px;width:222px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;box-shadow:var(--shadow);font-size:12.5px;z-index:4}
+#side.collapsed{width:auto;bottom:auto}
+#side.collapsed>*:not(.sidehead){display:none}
+.sidehead{display:flex;justify-content:space-between;align-items:center;font-weight:600;cursor:pointer;user-select:none}
+#side h4{margin:10px 0 4px;font-size:12px;color:var(--muted);font-weight:600}
+.lg{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;user-select:none}
+.lg.off{opacity:.38}
+.lg i{width:10px;height:10px;border-radius:50%;flex:none}
+.lg span.n{margin-left:auto;color:var(--muted)}
+.lg small{color:var(--muted)}
+.rec{padding:3px 0;cursor:pointer;border-bottom:1px dotted var(--line)}
+.rec:hover{color:var(--accent)}
+.note{color:var(--muted);font-size:12px;margin-top:6px}
+#hint{position:absolute;left:calc(var(--sidew,0px) + 12px);bottom:8px;color:var(--muted);font-size:12px;pointer-events:none;text-shadow:0 0 6px var(--halo),0 0 6px var(--halo)}
+
+/* 右侧详情 */
+#detail{position:absolute;right:10px;top:10px;bottom:10px;width:min(380px,92vw);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:var(--shadow);display:none;z-index:6}
+#detail h3{margin:0 24px 6px 0;font-size:15px;line-height:1.4}
+#detail .x{position:absolute;right:10px;top:8px;border:0;background:transparent;font-size:18px;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.chip{background:var(--chip);border-radius:10px;padding:1px 8px;font-size:12px;border:1px solid var(--line)}
+.chip.priv{border-color:var(--warn);color:var(--warn)}
+.chip.hot{border-color:#e8833a;color:#e8833a}
+#detail dl{margin:0 0 8px;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:13px}
+#detail dt{color:var(--muted)}
+#detail dd{margin:0;word-break:break-all}
+#detail pre{white-space:pre-wrap;word-break:break-word;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0;font:13px/1.65 inherit;max-height:46vh;overflow:auto}
+#detail ul{list-style:none;padding:0;margin:4px 0}
+#detail li{padding:3px 0;border-bottom:1px dotted var(--line);cursor:pointer;font-size:13px}
+#detail li:hover{color:var(--accent)}
+#detail li small{color:var(--muted)}
+
+#toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 14px;box-shadow:var(--shadow);display:none;z-index:10}
+#stage{--sidew:238px}
+#stage.sidecol{--sidew:0px}
+@media (max-width:760px){ #side{display:none} #stage{--sidew:0px} .bar{padding:6px 8px} #q{width:120px} }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <h1>大脑</h1>
+    <div class="seg" id="modeSeg" role="group" aria-label="看谁的脑子">
+      <button data-mode="whale" aria-pressed="true">小鲸鱼</button>
+      <button data-mode="sister" aria-pressed="false">姐姐</button>
+      <button data-mode="both" aria-pressed="false">并排对比</button>
+    </div>
+    <div id="searchWrap"><input id="q" type="search" placeholder="搜标题、摘要、出处…" autocomplete="off"><div id="results"></div></div>
+    <div class="seg" id="colorSeg" role="group" aria-label="上色方式">
+      <button data-color="type" aria-pressed="true">按类型</button>
+      <button data-color="emotion" aria-pressed="false">按情绪</button>
+      <button data-color="region" aria-pressed="false">按脑区</button>
+    </div>
+    <label>连线
+      <select id="linkSel"><option value="auto">随缩放</option><option value="all">全部</option><option value="intra">只看区内</option><option value="none">不显示</option></select>
+    </label>
+    <label title="缩小时只画重要的点，放大逐步出全部。关掉 = 一直画全部"><input type="checkbox" id="lodChk" checked>缩放分级</label>
+    <label><input type="checkbox" id="regionChk" checked>脑区圈</label>
+    <span class="sp"></span>
+    <button class="ghost" id="reloadBtn" title="重新整理一遍图">刷新</button>
+    <button class="ghost" id="themeBtn" title="深浅色">深色</button>
+  </header>
+  <main id="stage">
+    <div id="panes"></div>
+    <canvas id="fg"></canvas>
+    <aside id="side">
+      <div class="sidehead" id="sideHead"><span>图例</span><span id="sideTog">收起</span></div>
+      <div id="legendBox"></div>
+      <h4>亮度 = 重要度；越新越靠脑区外缘</h4>
+      <div id="sharedHead" style="display:none"><h4>两边共有的（点一下飞过去）</h4><div id="sharedBox"></div></div>
+      <h4>刚被想起的（<span id="recMin">30</span> 分钟内）</h4>
+      <div id="recentBox"><div class="note">暂时没有</div></div>
+      <h4>脑区（点一下飞过去）</h4>
+      <div id="regionBox"></div>
+      <div class="note" id="stats"></div>
+    </aside>
+    <div id="hint">左键拖动 · 滚轮缩放 · 点一个点看原文 · 悬停看相连的点</div>
+    <div id="tip"></div>
+    <aside id="detail"></aside>
+    <div id="toast" role="status"></div>
+  </main>
+</div>
+
+<script>
+'use strict';
+/* ───────────── 小工具 ───────────── */
+const $ = (s, r) => (r || document).querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch { /* 读不到存储也能用 */ } },
+  del(k){ try { localStorage.removeItem(k); } catch { /* 同上 */ } },
+};
+// 令牌：?token= 进来存起来并从地址栏抹掉（同 console.html）
+(function(){
+  const qs = new URLSearchParams(location.search);
+  const t = qs.get('token');
+  if (t) {
+    store.set('consoleToken', t);
+    qs.delete('token');
+    history.replaceState({}, '', location.pathname + (qs.toString() ? '?' + qs : '') + location.hash);
+  }
+})();
+const tokenHeaders = () => { const t = store.get('consoleToken'); return t ? {'x-console-token': t} : {}; };
+const DIRECT = 'http://127.0.0.1:3210';       // 开发回退：直连记忆服务（它只对回环地址的页面开跨域）
+const BRAIN_NAME = {whale: '小鲸鱼', sister: '姐姐'};
+const DEFAULT_TYPES = [
+  {id:'event',label:'事件',color:'#e8833a'},{id:'fact',label:'事实',color:'#5a9e3c'},{id:'reflection',label:'反思',color:'#7b61c9'},
+  {id:'skill',label:'技能',color:'#1f9aa8'},{id:'lesson',label:'道理',color:'#c9a227'},{id:'identity',label:'身份',color:'#d6455d'},{id:'entity',label:'实体',color:'#4f6fd8'}];
+const DEFAULT_EMOTIONS = [
+  {id:'happy',label:'开心',color:'#f2b01e'},{id:'sweet',label:'甜蜜',color:'#ef7fa8'},{id:'calm',label:'踏实',color:'#5bb98c'},{id:'heartache',label:'心疼',color:'#c2476b'},
+  {id:'worry',label:'担心',color:'#8a6fd1'},{id:'sad',label:'难过',color:'#4b7bd8'},{id:'jealous',label:'吃醋',color:'#d1702f'}];
+const NEUTRAL = '#9aa3a8';
+const RECENT_REFRESH_MS = 30000;              // 「刚想起」每 30 秒刷新
+const PERF = window.__brainPerf = {};         // 开发时看加载各阶段用了多久（控制台里 __brainPerf）
+
+let toastTimer = 0;
+function toast(msg, ms = 2600){ const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.display = 'none'; }, ms); }
+function fmtTime(ms){
+  if (!ms) return '没记时间';
+  try { return new Date(ms).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', year: 'numeric'}); }
+  catch { return new Date(ms).toISOString(); }
+}
+function hhmmss(ms){ try { return new Date(ms).toLocaleTimeString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false}); } catch { return ''; } }
+function hex2rgb(h){ h = String(h).replace('#', ''); if (h.length === 3) h = h.split('').map(c => c + c).join(''); const n = parseInt(h, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+const rgbaCache = new Map();
+function rgba(hex, a){ const k = hex + '|' + a; let v = rgbaCache.get(k); if (!v) { const [r, g, b] = hex2rgb(hex); v = `rgba(${r},${g},${b},${a})`; rgbaCache.set(k, v); } return v; }
+function hash01(s){ let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 100000) / 100000; }
+
+/* ───────────── 取数 ───────────── */
+async function readJson(res){
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { throw new Error('回的不是数据（HTTP ' + res.status + '）'); }
+}
+async function fetchOnce(url, retried){
+  const res = await fetch(url, {headers: tokenHeaders()});
+  if (res.status === 401 || res.status === 403) {
+    if ((retried || 0) >= 2) { store.del('consoleToken'); const e = new Error('没有权限（令牌不对）'); e.auth = true; throw e; }
+    const t = prompt('请输入访问令牌：');
+    if (!t) { const e = new Error('没有令牌'); e.auth = true; throw e; }
+    store.set('consoleToken', t.trim());
+    return fetchOnce(url, (retried || 0) + 1);
+  }
+  const j = await readJson(res);
+  if (!res.ok || j.ok === false) { const e = new Error(j.error || ('HTTP ' + res.status)); e.status = res.status; throw e; }
+  return j;
+}
+/** path：'graph' 或 'graph/node'。先走桥接代理 /api/brain/…，不通再直连记忆服务。 */
+async function brainApi(path, params){
+  const qs = new URLSearchParams(params).toString();
+  const prox = `/api/brain/${path}?${qs}`;
+  try {
+    return await fetchOnce(prox);
+  } catch (e1) {
+    if (e1.auth && e1.message === '没有令牌') { /* 取消输入令牌：试试直连 */ }
+    else if (e1.status && e1.status !== 404 && e1.status !== 502 && e1.status !== 503) throw e1;
+    try { return await fetchOnce(`${DIRECT}/${path}?${qs}`); }
+    catch (e2) { throw (e1.status === 502 || e1.status === 503) ? e1 : (e2.status ? e2 : e1); }
+  }
+}
+async function loadScript(name, globalCheck){
+  if (globalCheck()) return;
+  let last;
+  for (const u of ['/vendor/' + name, 'vendor/' + name]) {
+    try {
+      const r = await fetch(u, {headers: tokenHeaders()});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const s = document.createElement('script');
+      s.textContent = await r.text();           // 内联执行：桥接的安全头只允许同源脚本，不能用 blob
+      document.head.appendChild(s);
+      if (globalCheck()) return;
+    } catch (e) { last = e; }
+  }
+  await new Promise((ok, bad) => {              // 最后一招：直接用 script 标签（本地打开页面、没有令牌要求时）
+    const s = document.createElement('script');
+    s.src = 'vendor/' + name; s.onload = ok; s.onerror = () => bad(last || new Error(name + ' 没加载上'));
+    document.head.appendChild(s);
+  });
+  if (!globalCheck()) throw new Error(name + ' 没加载上');
+}
+let libPromise = null;
+function loadVendor(){
+  if (!libPromise) {
+    libPromise = (async () => {
+      await Promise.all([loadScript('graphology.umd.min.js', () => !!window.graphology), loadScript('sigma.min.js', () => !!window.Sigma)]);
+    })().catch(e => { libPromise = null; throw e; });
+  }
+  return libPromise;
+}
+
+/* ───────────── 状态 / 主题 ───────────── */
+const S = {
+  mode: 'whale', colorBy: 'type', linkMode: 'auto', lod: true, showRegions: true,
+  hidden: {type: new Set(), emotion: new Set(), region: new Set()},
+  query: '', panes: [], theme: 'light', gen: 0, cross: [],
+};
+const T = {};                                  // 画布上用的颜色（随主题变）
+const colorCache = new Map();
+function applyTheme(t){
+  S.theme = t;
+  document.documentElement.setAttribute('data-theme', t);
+  const dark = t === 'dark';
+  Object.assign(T, dark
+    ? {bgRgb: [15, 21, 20], ink: '#dce6e0', halo: '#0f1514', grid: 'rgba(180,220,200,0.065)', edgeRgb: '170,188,182', edgeIntra: 0.22, edgeCross: 0.12, ring: '#ffd58a', hover: '#4cc3b3'}
+    : {bgRgb: [246, 248, 243], ink: '#27312c', halo: '#f6f8f3', grid: 'rgba(60,90,70,0.08)', edgeRgb: '96,110,118', edgeIntra: 0.2, edgeCross: 0.1, ring: '#e8833a', hover: '#2a9d8f'});
+  colorCache.clear();
+  $('#themeBtn').textContent = dark ? '浅色' : '深色';
+  store.set('brainTheme', t);
+}
+applyTheme(store.get('brainTheme') === 'dark' ? 'dark' : 'light');
+
+/* ───────────── 颜色 / 大小 ───────────── */
+function mixToBg(hex, t){           // 亮度 t（0~1）：1 = 原色，0 = 背景色
+  const k = hex + '|' + t;
+  let v = colorCache.get(k);
+  if (!v) {
+    const c = hex2rgb(hex), b = T.bgRgb;
+    const m = i => Math.round(b[i] + (c[i] - b[i]) * t);
+    v = `rgb(${m(0)},${m(1)},${m(2)})`;
+    colorCache.set(k, v);
+  }
+  return v;
+}
+function baseColor(d, p){
+  if (S.colorBy === 'emotion') return (d.emo && p.emoColor[d.emo]) || NEUTRAL;
+  if (S.colorBy === 'region') return p.regionColor[d.region] || NEUTRAL;
+  return p.typeColor[d.ntype] || NEUTRAL;
+}
+function nodeColor(d, p){
+  const t = Math.round((0.36 + 0.64 * Math.pow(d.imp || 0, 0.75)) * 12) / 12;      // 亮度 = 重要度，分 12 档
+  return mixToBg(baseColor(d, p), t);
+}
+function nodeBaseSize(n){
+  const imp = n.importance || 0;
+  if (n.isSelf) return 8;
+  if (n.type === 'identity') return 4;
+  if (n.type === 'entity') return 1.3 + 1.9 * imp;
+  return 0.7 + 1.6 * imp;
+}
+function isHiddenNode(d){
+  return S.hidden.type.has(d.ntype) || S.hidden.emotion.has(d.emo || '_') || S.hidden.region.has(d.region);
+}
+
+/* ───────────── 缩放分级 ───────────── */
+function lodFraction(ratio){
+  const z = 1 / ratio;
+  return z < 1.25 ? 0.4 : z < 1.9 ? 0.64 : z < 2.9 ? 0.86 : 1;
+}
+function computeVisibility(p){
+  if (!p.graph) return;
+  const lodOn = S.lod;
+  const frac = lodOn ? lodFraction(p.sigma ? p.sigma.getCamera().ratio : 1) : 1;
+  p.lodFrac = frac;
+  p.crossOn = S.linkMode === 'all' || (S.linkMode === 'auto' && (!lodOn || frac >= 0.86));
+  const hid = p.hid;
+  for (let i = 0; i < p.n; i++) {
+    const d = p.attrs[i];
+    hid[i] = (isHiddenNode(d) || (d.rank > frac && !d.pin && !p.recent.has(d.id))) ? 1 : 0;
+  }
+}
+
+/* ───────────── 一个窗格 = 一个人的脑子 ───────────── */
+function newPane(brain){
+  const el = document.createElement('section');
+  el.className = 'pane';
+  el.innerHTML = '<canvas class="bg"></canvas><div class="gv"></div><div class="ptitle"></div><div class="pload">正在整理脑子……第一次要几秒</div>';
+  $('#panes').appendChild(el);
+  const bg = $('canvas.bg', el);
+  return {brain, el, gv: $('.gv', el), bg, bgCtx: bg.getContext('2d'), title: $('.ptitle', el), load: $('.pload', el),
+          data: null, sigma: null, graph: null, n: 0, attrs: [], idx: new Map(), adj: [], hid: null, regions: {}, types: {}, emotions: {},
+          recent: new Set(), match: null, sel: null, hover: null, typeColor: {}, emoColor: {}, regionColor: {}, lodFrac: 1, crossOn: true,
+          w: 0, h: 0, dpr: 1, mx: 0, my: 0, lodBucket: -1};
+}
+function setPaneMsg(p, msg, isErr, retry){
+  p.load.className = 'pload' + (isErr ? ' err' : '');
+  p.load.innerHTML = esc(msg || '') + (retry ? '<br><button class="ghost">重试</button>' : '');
+  if (retry) $('button', p.load).onclick = retry;
+}
+function sizePane(p){
+  const w = p.el.clientWidth, h = p.el.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (w !== p.w || h !== p.h || dpr !== p.dpr) {
+    p.w = w; p.h = h; p.dpr = dpr;
+    p.bg.width = Math.round(w * dpr); p.bg.height = Math.round(h * dpr);
+    p.bg.style.width = w + 'px'; p.bg.style.height = h + 'px';
+    dirty();
+  }
+}
+
+/** 把一份数据装进窗格：graphology 图 + sigma 渲染器。坐标直接用服务端算好的（y 取反：sigma 的 y 轴向上）。 */
+function mountGraph(p, data){
+  const t0 = performance.now();
+  p.data = data;
+  p.types = Object.fromEntries((data.types || DEFAULT_TYPES).map(t => [t.id, t]));
+  p.emotions = Object.fromEntries((data.emotions || DEFAULT_EMOTIONS).map(t => [t.id, t]));
+  p.typeColor = Object.fromEntries(Object.values(p.types).map(t => [t.id, t.color]));
+  p.emoColor = Object.fromEntries(Object.values(p.emotions).map(t => [t.id, t.color]));
+  p.regionColor = Object.fromEntries((data.regions || []).map(r => [r.id, r.color]));
+  p.regions = Object.fromEntries((data.regions || []).map(r => [r.id, Object.assign({}, r, {gx: r.x, gy: -r.y})]));
+  const nodes = data.nodes || [];
+  const linkTypes = data.linkTypes || [];
+  // 线有两种写法：{source, target, type, w}（老的 / 桥接没转发 compact 参数时），或 [起点序号, 终点序号, 类型序号, 权重]（compact=1）
+  const links = (data.links || []).map(l => Array.isArray(l) ? {source: nodes[l[0]] && nodes[l[0]].id, target: nodes[l[1]] && nodes[l[1]].id, type: linkTypes[l[2]], w: l[3]} : l);
+  p.n = nodes.length;
+  p.recent = new Set(data.recent || []);
+  p.idx = new Map();
+  p.attrs = new Array(p.n);
+  p.adj = new Array(p.n);
+  p.hid = new Uint8Array(p.n);
+  // 缩放分级的排名：按重要度排（同分的用 id 的哈希打散，所以画出来在区里是均匀的，不会只剩一圈），越靠前越先出现；身份 / 实体 / 想起过的始终在
+  const score = nodes.map(n => (n.importance || 0) + 0.02 * hash01(String(n.id)));
+  const order = nodes.map((_, i) => i).sort((a, b) => score[b] - score[a]);
+  const rank = new Float32Array(p.n);
+  order.forEach((i, k) => { rank[i] = k / Math.max(1, p.n - 1); });
+  const gNodes = new Array(p.n);
+  for (let i = 0; i < p.n; i++) {
+    const n = nodes[i];
+    const pin = n.type === 'identity' || n.type === 'entity';
+    const d = {x: n.x, y: -n.y, size: nodeBaseSize(n), label: n.label, color: NEUTRAL,
+               id: n.id, idx: i, ntype: n.type, region: n.region, emo: n.emotion || null, imp: n.importance || 0, rank: rank[i], pin, n};
+    p.attrs[i] = d; p.idx.set(n.id, i); p.adj[i] = [];
+    gNodes[i] = {key: n.id, attributes: d};
+  }
+  const gEdges = [];
+  for (const l of links) {
+    const a = p.idx.get(l.source), b = p.idx.get(l.target);
+    if (a === undefined || b === undefined) continue;
+    p.adj[a].push(b); p.adj[b].push(a);
+    gEdges.push({source: l.source, target: l.target, attributes: {si: a, ti: b, intra: nodes[a].region === nodes[b].region ? 1 : 0, ltype: l.type, w: l.w}});
+  }
+  const Graph = window.graphology.Graph || window.graphology;
+  const graph = new Graph({type: 'undirected', multi: true, allowSelfLoops: false});
+  graph.import({nodes: gNodes, edges: gEdges});
+  p.graph = graph;
+  const t1 = performance.now();
+
+  computeVisibility(p);
+  const SigmaClass = window.Sigma.Sigma || window.Sigma.default || window.Sigma;
+  const sigma = new SigmaClass(graph, p.gv, {
+    renderEdgeLabels: false, enableEdgeEvents: false, allowInvalidContainer: true,
+    labelFont: '"Microsoft YaHei","PingFang SC",sans-serif', labelSize: 12, labelWeight: '400',
+    labelRenderedSizeThreshold: 3.6, labelDensity: 0.8, labelGridCellSize: 100,
+    minCameraRatio: 0.015, maxCameraRatio: 1.5, stagePadding: 36, hideEdgesOnMove: false,
+    defaultEdgeType: 'line', defaultNodeType: 'circle',
+    defaultDrawNodeLabel: drawLabel, defaultDrawNodeHover: () => {},
+    nodeReducer: (id, d) => reduceNode(p, d),
+    edgeReducer: (id, d) => reduceEdge(p, d),
+  });
+  p.sigma = sigma;
+  p.lodBucket = S.lod ? lodFraction(1) * 100 : 9;
+  sigma.on('enterNode', ({node}) => { const i = p.idx.get(node); if (i !== undefined && !p.hid[i]) hoverNode(p, node); });
+  sigma.on('leaveNode', () => hoverNode(p, null));
+  sigma.on('clickNode', ({node}) => selectNode(p, node));
+  sigma.on('clickStage', () => selectNode(null));
+  sigma.on('afterRender', () => { dirty(); if (!PERF.firstRenderAt) PERF.firstRenderAt = Math.round(performance.now()); });
+  sigma.getCamera().on('updated', () => { checkLodBucket(p); dirty(); });
+  p.gv.addEventListener('mousemove', e => { p.mx = e.clientX; p.my = e.clientY; if (p.hover) placeTip(); }, {passive: true});
+  p.gv.addEventListener('mouseleave', () => hoverNode(p, null));
+  setPaneMsg(p, '');
+  const at = data.generatedAt ? hhmmss(data.generatedAt) : '';
+  p.title.innerHTML = `${esc(BRAIN_NAME[p.brain] || p.brain)}<small>${p.n} 个点 · ${links.length} 条线${at ? ' · 整理于 ' + esc(at) : ''}</small>`;
+  const t2 = performance.now();
+  PERF.readyAt = Math.round(t2);             // 从打开页面算起（performance.now 的零点是导航开始）
+  PERF[p.brain] = Object.assign(PERF[p.brain] || {}, {buildGraphMs: Math.round(t1 - t0), sigmaInitMs: Math.round(t2 - t1), nodes: p.n, edges: gEdges.length});
+}
+function reduceNode(p, d){
+  const hidden = !!p.hid[d.idx];
+  const out = {x: d.x, y: d.y, size: d.size, label: d.label, color: hidden ? d.color : nodeColor(d, p), hidden};
+  if (!hidden && p.recent.has(d.id)) out.size = d.size * 1.35;
+  return out;
+}
+function reduceEdge(p, d){
+  const hidden = S.linkMode === 'none' || p.hid[d.si] || p.hid[d.ti] || (!p.crossOn && !d.intra) || (S.linkMode === 'intra' && !d.intra);
+  if (hidden) return {hidden: true};
+  if (d.ltype === 'recall') return {color: p.edgeRecall, size: 1, hidden: false};
+  const m = d.ltype === 'mention';
+  return {color: d.intra ? (m ? p.edgeMention : p.edgeIntra) : (m ? p.edgeMentionCross : p.edgeCross), size: 1, hidden: false};
+}
+function drawLabel(ctx, d, st){
+  if (!d.label) return;
+  ctx.font = `${st.labelWeight} ${st.labelSize}px ${st.labelFont}`;
+  const x = d.x + d.size + 3, y = d.y + st.labelSize / 3;
+  ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.strokeStyle = T.halo; ctx.strokeText(d.label, x, y);
+  ctx.fillStyle = T.ink; ctx.fillText(d.label, x, y);
+}
+function setEdgeColors(p){
+  // 线不用带透明度的颜色：sigma 的 WebGL 线条带 alpha 时会被画成发白的线。改成「线色按透明度提前和背景色混好」的不透明色，效果一样
+  const mix = a => { const c = T.edgeRgb.split(',').map(Number), b = T.bgRgb; return `rgb(${[0, 1, 2].map(i => Math.round(b[i] + (c[i] - b[i]) * a)).join(',')})`; };
+  // 「提到」的线（记忆 → 实体）一个实体能有上千条，画得最淡；意思相近 / 同一件事 / 相邻 / 核心的线是脑子里真正的结构，画得深一点
+  p.edgeMention = mix(T.edgeIntra * 0.55);
+  p.edgeMentionCross = mix(T.edgeCross * 0.6);
+  p.edgeIntra = mix(T.edgeIntra * 1.5);
+  p.edgeCross = mix(T.edgeCross * 1.6);
+  p.edgeRecall = T.ring;
+}
+function checkLodBucket(p){
+  const ratio = p.sigma.getCamera().ratio;
+  const b = !S.lod ? 9 : lodFraction(ratio) * 100;
+  if (b === p.lodBucket) return;
+  p.lodBucket = b;
+  refreshPane(p);
+}
+let refreshQueued = new Set();
+function refreshPane(p){
+  if (refreshQueued.has(p)) return;
+  refreshQueued.add(p);
+  requestAnimationFrame(() => {
+    refreshQueued.delete(p);
+    if (!p.sigma || !S.panes.includes(p)) return;         // 已经切走 / 拆掉的窗格不再重画
+    setEdgeColors(p);
+    computeVisibility(p);
+    p.sigma.refresh({skipIndexation: true});
+    dirty();
+  });
+}
+function refreshAll(){ S.panes.forEach(refreshPane); }
+function teardown(){
+  for (const p of S.panes) { try { p.sigma && p.sigma.kill(); } catch { /* 已经没了 */ } p.sigma = null; p.el.remove(); }
+  S.panes = []; S.cross = []; S.hover = null;
+  S.hidden.type.clear(); S.hidden.emotion.clear(); S.hidden.region.clear();
+  $('#detail').style.display = 'none'; hideTip();
+}
+
+/* ───────────── 悬停 / 选中 / 搜索 / 飞过去 ───────────── */
+function hoverNode(p, id){
+  if (p.hover === id) return;
+  p.hover = id;
+  p.gv.classList.toggle('dim', !!id || !!p.match);
+  if (id) { showTip(p, id); } else { hideTip(); if (p.match) p.gv.classList.add('dim'); }
+  dirty();
+}
+function tipHtml(p, d){
+  const n = d.n, reg = p.regions[n.region];
+  return `<b>${esc(n.label)}</b><br><span>${esc(n.typeLabel || n.type)}${reg ? ' · ' + esc(reg.name) : ''}${n.private ? ' · 私聊里的' : ''} · 相连 ${p.adj[d.idx].length} 个点</span>${n.summary && n.summary !== n.label ? '<br>' + esc(n.summary) : ''}`;
+}
+function showTip(p, id){
+  const i = p.idx.get(id); if (i === undefined) return;
+  const tip = $('#tip');
+  tip.innerHTML = tipHtml(p, p.attrs[i]);
+  tip.style.display = 'block';
+  placeTip(p);
+}
+function placeTip(p){
+  p = p || S.panes.find(q => q.hover); if (!p) return;
+  const tip = $('#tip');
+  const r = tip.getBoundingClientRect();
+  let x = p.mx + 16, y = p.my + 16;
+  if (x + r.width > innerWidth - 8) x = p.mx - r.width - 12;
+  if (y + r.height > innerHeight - 8) y = p.my - r.height - 12;
+  tip.style.left = Math.max(4, x) + 'px'; tip.style.top = Math.max(4, y) + 'px';
+}
+function hideTip(){ $('#tip').style.display = 'none'; }
+
+let selSeq = 0;
+function selectNode(p, id){
+  S.panes.forEach(q => { q.sel = null; });
+  if (p && id) S.panes.forEach(q => hoverNode(q, null));
+  if (!p || !id) { $('#detail').style.display = 'none'; dirty(); return; }
+  p.sel = id;
+  dirty();
+  showDetail(p, id, p.attrs[p.idx.get(id)].n);
+}
+async function showDetail(p, id, n){
+  const box = $('#detail');
+  const reg = p.regions[n.region];
+  const seq = ++selSeq;
+  const deg = p.adj[p.idx.get(id)].length;
+  const chips = [`<span class="chip" style="border-color:${esc(p.typeColor[n.type] || NEUTRAL)}">${esc(n.typeLabel || n.type)}</span>`,
+    reg ? `<span class="chip">${esc(reg.name)}</span>` : '',
+    n.emotion && p.emotions[n.emotion] ? `<span class="chip">${esc(p.emotions[n.emotion].label)}</span>` : '',
+    n.private ? '<span class="chip priv">私聊里的</span>' : '',
+    p.recent.has(id) ? '<span class="chip hot">刚被想起</span>' : ''].join('');
+  const head = `<button class="x" aria-label="关闭">×</button><h3>${esc(n.label)}</h3><div class="chips">${chips}</div>
+    <dl><dt>脑子</dt><dd>${esc(BRAIN_NAME[p.brain] || p.brain)}</dd><dt>出处</dt><dd>${esc(n.source || '—')}</dd><dt>时间</dt><dd>${esc(fmtTime(n.at))}</dd>
+    <dt>重要度</dt><dd>${Math.round((n.importance || 0) * 100)}%　<span style="color:var(--muted)">新鲜度 ${Math.round((n.recency || 0) * 100)}%</span></dd>
+    <dt>脑区</dt><dd>${esc(reg ? reg.name + '（' + reg.area + '）' : '—')}</dd><dt>相连</dt><dd>${deg} 个点</dd></dl>`;
+  box.style.display = 'block';
+  box.innerHTML = head + `<pre>${esc(n.summary || n.label)}</pre><div class="note">正在取原文……</div>`;
+  $('.x', box).onclick = () => selectNode(null);
+  try {
+    const j = await brainApi('graph/node', {brain: p.brain, id});
+    if (seq !== selSeq) return;
+    const d = j.node || {};
+    const nbs = (d.neighbors || []).map(x => `<li data-id="${esc(x.id)}">${esc(x.label)} <small>${esc(x.rel)} · ${esc(x.type)}</small></li>`).join('');
+    box.innerHTML = head + `<pre>${esc(d.text || n.summary || n.label)}</pre>` + (nbs ? `<h4 style="margin:8px 0 2px;color:var(--muted);font-size:12px">相连的点</h4><ul>${nbs}</ul>` : '');
+    $('.x', box).onclick = () => selectNode(null);
+    box.querySelectorAll('li').forEach(li => { li.onclick = () => { if (p.idx.has(li.dataset.id)) { selectNode(p, li.dataset.id); flyToNode(p, li.dataset.id); } }; });
+  } catch (e) {
+    if (seq !== selSeq) return;
+    box.innerHTML = head + `<pre>${esc(n.summary || n.label)}</pre><div class="note">原文暂时读不到（${esc(e.message)}）。上面是摘要。</div>`;
+    $('.x', box).onclick = () => selectNode(null);
+  }
+}
+function flyToNode(p, id){
+  if (!p.sigma) return;
+  const i = p.idx.get(id); if (i === undefined) return;
+  // 点被缩放分级藏起来的话，先放大到够看见它
+  const need = p.attrs[i].rank;
+  let ratio = Math.min(p.sigma.getCamera().ratio, 0.35);
+  if (S.lod && need > 0.86) ratio = Math.min(ratio, 0.3);
+  try {
+    const dd = p.sigma.getNodeDisplayData(id);
+    p.sigma.getCamera().animate({x: dd.x, y: dd.y, ratio}, {duration: 650});
+  } catch { /* 点不在图里 */ }
+}
+function flyToRegion(p, rid){
+  const r = p.regions[rid]; if (!p.sigma || !r) return;
+  const sg = p.sigma;
+  const a = sg.graphToViewport({x: r.gx, y: r.gy}), b = sg.graphToViewport({x: r.gx + r.radius, y: r.gy});
+  const radPx = Math.max(4, Math.hypot(b.x - a.x, b.y - a.y));
+  const cam = sg.getCamera();
+  const target = Math.max(0.015, Math.min(1.5, cam.ratio * radPx * 2.3 / Math.max(120, Math.min(p.w, p.h))));
+  const f = sg.viewportToFramedGraph(a);
+  cam.animate({x: f.x, y: f.y, ratio: target}, {duration: 650});
+}
+function searchHits(p, q){
+  const out = [];
+  for (const d of p.attrs) {
+    if (!d.hay) { const n = d.n; d.hay = `${n.label} ${n.summary || ''} ${n.source || ''} ${n.place || ''} ${n.typeLabel || ''}`.toLowerCase(); }
+    if (d.hay.includes(q)) out.push(d);
+  }
+  return out;
+}
+function runSearch(){
+  const q = $('#q').value.trim().toLowerCase();
+  S.query = q;
+  const box = $('#results');
+  if (!q) { S.panes.forEach(p => { p.match = null; p.gv.classList.remove('dim'); }); box.style.display = 'none'; dirty(); return; }
+  const rows = [];
+  for (const p of S.panes) {
+    const hits = searchHits(p, q);
+    p.match = new Set(hits.map(d => d.id));
+    p.gv.classList.add('dim');
+    hits.sort((a, b) => b.imp - a.imp);
+    p.matchTop = hits.slice(0, 40);
+    hits.slice(0, 30).forEach(d => rows.push({p, d}));
+  }
+  box.innerHTML = rows.length
+    ? rows.map((r, i) => `<div data-i="${i}">${esc(r.d.n.label)}<br><small>${S.panes.length > 1 ? esc(BRAIN_NAME[r.p.brain]) + ' · ' : ''}${esc(r.d.n.typeLabel || r.d.ntype)} · ${esc(r.d.n.source || '')}</small></div>`).join('')
+    : '<div><small>没找到（只搜标题、摘要、出处）</small></div>';
+  box.style.display = 'block';
+  box.querySelectorAll('div[data-i]').forEach(dv => { dv.onclick = () => { const r = rows[+dv.dataset.i]; box.style.display = 'none'; selectNode(r.p, r.d.id); flyToNode(r.p, r.d.id); }; });
+  dirty();
+}
+
+/* ───────────── 图例 ───────────── */
+function hiddenSetFor(mode){ return mode === 'emotion' ? S.hidden.emotion : mode === 'region' ? S.hidden.region : S.hidden.type; }
+function renderLegend(){
+  const box = $('#legendBox');
+  const cnt = {};
+  const bump = k => { cnt[k] = (cnt[k] || 0) + 1; };
+  const hs = hiddenSetFor(S.colorBy);
+  let items;
+  if (S.colorBy === 'type') {
+    S.panes.forEach(p => p.attrs.forEach(d => bump(d.ntype)));
+    const t = S.panes[0] ? Object.values(S.panes[0].types) : DEFAULT_TYPES;
+    items = t.map(x => ({id: x.id, label: x.label, color: x.color, n: cnt[x.id] || 0}));
+  } else if (S.colorBy === 'emotion') {
+    S.panes.forEach(p => p.attrs.forEach(d => bump(d.emo || '_')));
+    const e = S.panes[0] ? Object.values(S.panes[0].emotions) : DEFAULT_EMOTIONS;
+    items = e.map(x => ({id: x.id, label: x.label, color: x.color, n: cnt[x.id] || 0})).concat([{id: '_', label: '没有明显情绪', color: NEUTRAL, n: cnt._ || 0}]);
+  } else {
+    S.panes.forEach(p => p.attrs.forEach(d => bump(d.region)));
+    const r = S.panes[0] ? Object.values(S.panes[0].regions) : [];
+    items = r.filter(x => cnt[x.id]).map(x => ({id: x.id, label: x.name, color: x.color, n: cnt[x.id] || 0}));
+  }
+  box.innerHTML = items.map(it => `<div class="lg${hs.has(it.id) ? ' off' : ''}" data-id="${esc(it.id)}" title="点一下隐藏 / 显示这一类"><i style="background:${esc(it.color)}"></i>${esc(it.label)}<span class="n">${it.n}</span></div>`).join('');
+  box.querySelectorAll('.lg').forEach(dv => { dv.onclick = () => { const id = dv.dataset.id; if (hs.has(id)) hs.delete(id); else hs.add(id); refreshAll(); renderLegend(); }; });
+  // 脑区列表
+  const rb = $('#regionBox');
+  const first = S.panes[0];
+  rb.innerHTML = first ? Object.values(first.regions).map(r => {
+    const c = S.panes.reduce((s, p) => s + ((p.regions[r.id] || {}).count || 0), 0);
+    return `<div class="lg" data-r="${esc(r.id)}" title="${esc(r.holds)}"><i style="background:${esc(r.color)}"></i><span>${esc(r.name)}<br><small>${esc(r.holds)}</small></span><span class="n">${c}</span></div>`;
+  }).join('') : '';
+  rb.querySelectorAll('.lg').forEach(dv => { dv.onclick = () => S.panes.forEach(p => flyToRegion(p, dv.dataset.r)); });
+  const nn = S.panes.reduce((s, p) => s + p.n, 0), ll = S.panes.reduce((s, p) => s + ((p.data && p.data.links) || []).length, 0);
+  $('#stats').textContent = S.panes.length ? `共 ${nn} 个点、${ll} 条线（全部都画了；缩小时只画重要的，放大就出来）` : '';
+  renderRecent();
+  renderShared();
+}
+function renderRecent(){
+  const box = $('#recentBox');
+  const rows = [];
+  S.panes.forEach(p => p.recent.forEach(id => { const i = p.idx.get(id); if (i !== undefined) rows.push({p, d: p.attrs[i]}); }));
+  $('#recMin').textContent = (S.panes[0] && S.panes[0].data && S.panes[0].data.recentMin) || 30;
+  box.innerHTML = rows.length ? rows.slice(0, 20).map((r, i) => `<div class="rec" data-i="${i}">${S.panes.length > 1 ? esc(BRAIN_NAME[r.p.brain]) + '：' : ''}${esc(r.d.n.label)}</div>`).join('') : '<div class="note">暂时没有</div>';
+  box.querySelectorAll('.rec').forEach(dv => { dv.onclick = () => { const r = rows[+dv.dataset.i]; selectNode(r.p, r.d.id); flyToNode(r.p, r.d.id); }; });
+}
+
+/* ───────────── 并排：两个脑子共有的实体 ───────────── */
+function canon(key){
+  if (!key) return '';
+  if (key === 'person:sister' || key === 'self:sister') return 'who:sister';
+  if (key === 'person:whale' || key === 'self:whale') return 'who:whale';
+  return /^(person|work|place):/.test(key) ? key : '';
+}
+function crossPairs(){
+  if (S.panes.length !== 2) return [];
+  const [A, B] = S.panes;
+  const mb = new Map();
+  for (const d of B.attrs) { const k = canon(d.n.key); if (k) mb.set(k, d); }
+  const out = [];
+  for (const a of A.attrs) {
+    const k = canon(a.n.key); if (!k) continue;
+    const b = mb.get(k);
+    if (b) out.push({a, b, k, label: k === 'who:sister' ? '姐姐' : k === 'who:whale' ? '小鲸鱼' : a.n.label, peer: k.startsWith('who:'), color: `hsl(${Math.round(hash01(k) * 360)},62%,${S.theme === 'dark' ? 66 : 46}%)`});
+  }
+  out.sort((x, y) => (y.peer - x.peer) || (y.a.imp + y.b.imp) - (x.a.imp + x.b.imp));
+  return out;
+}
+function renderShared(){
+  const head = $('#sharedHead'), box = $('#sharedBox');
+  if (S.panes.length !== 2 || !S.cross.length) { head.style.display = 'none'; return; }
+  head.style.display = '';
+  box.innerHTML = S.cross.map((c, i) => `<div class="lg" data-i="${i}"><i style="background:${c.color}"></i><span>${esc(c.label)}<br><small>${esc(c.a.n.label)} ↔ ${esc(c.b.n.label)}</small></span><span class="n">${S.panes[0].adj[c.a.idx].length}/${S.panes[1].adj[c.b.idx].length}</span></div>`).join('');
+  box.querySelectorAll('.lg').forEach(dv => { dv.onclick = () => { const c = S.cross[+dv.dataset.i]; flyToNode(S.panes[0], c.a.id); flyToNode(S.panes[1], c.b.id); }; });
+}
+
+/* ───────────── 画布：背景（格子、脑区圈）和上层（区名、闪烁、高亮、跨脑线） ───────────── */
+let needDraw = true;
+function dirty(){ needDraw = true; }
+function gp(p, x, y){ return p.sigma.graphToViewport({x, y}); }
+function drawBg(p){
+  const ctx = p.bgCtx;
+  ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
+  ctx.clearRect(0, 0, p.w, p.h);
+  if (!p.sigma) return;
+  // 格子：画在世界坐标上，跟着缩放走；格距不够 44px 就翻倍
+  const o = gp(p, 0, 0), u = gp(p, 100, 0);
+  let step = 100, px = Math.abs(u.x - o.x);
+  if (px > 1e-3) {
+    while (px < 44) { px *= 2; step *= 2; }
+    while (px > 160) { px /= 2; step /= 2; }
+    const x0 = ((o.x % px) + px) % px, y0 = ((o.y % px) + px) % px;
+    ctx.strokeStyle = T.grid; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = x0; x < p.w; x += px) { ctx.moveTo(Math.round(x) + .5, 0); ctx.lineTo(Math.round(x) + .5, p.h); }
+    for (let y = y0; y < p.h; y += px) { ctx.moveTo(0, Math.round(y) + .5); ctx.lineTo(p.w, Math.round(y) + .5); }
+    ctx.stroke();
+  }
+  if (!S.showRegions) return;
+  for (const r of Object.values(p.regions)) {
+    const a = gp(p, r.gx, r.gy), b = gp(p, r.gx + r.radius, r.gy);
+    const rad = Math.hypot(b.x - a.x, b.y - a.y);
+    if (rad < 3 || a.x + rad < 0 || a.x - rad > p.w || a.y + rad < 0 || a.y - rad > p.h) continue;
+    const dim = S.hidden.region.has(r.id);
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = rgba(r.color, r.count ? (dim ? 0.2 : 0.62) : 0.28);
+    ctx.fillStyle = rgba(r.color, r.count ? 0.035 : 0.015);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(a.x, a.y, rad, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+function paneOffset(p){
+  const r = p.el.getBoundingClientRect(), s = $('#stage').getBoundingClientRect();
+  return {x: r.left - s.left, y: r.top - s.top};
+}
+function dot(ctx, p, d, x, y, extra){
+  const sz = Math.max(2.6, (p.sigma.scaleSize ? p.sigma.scaleSize(d.size) : d.size) + (extra || 0));
+  ctx.fillStyle = nodeColor(d, p);
+  ctx.beginPath(); ctx.arc(x, y, sz, 0, Math.PI * 2); ctx.fill();
+  return sz;
+}
+function drawFg(t){
+  const cv = $('#fg'), stage = $('#stage');
+  const w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = '12px "Microsoft YaHei",sans-serif'; ctx.textAlign = 'center';
+  const pos = new Map();                                    // 并排时跨脑线要用：点 → 在舞台上的位置
+  for (const p of S.panes) {
+    if (!p.sigma || !p.data) continue;
+    const off = paneOffset(p);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(off.x, off.y, p.w, p.h); ctx.clip();
+    ctx.translate(off.x, off.y);
+    // 区名
+    if (S.showRegions) {
+      for (const r of Object.values(p.regions)) {
+        const a = gp(p, r.gx, r.gy), b = gp(p, r.gx + r.radius, r.gy);
+        const rad = Math.hypot(b.x - a.x, b.y - a.y);
+        if (rad < 12 || a.x + rad < 0 || a.x - rad > p.w || a.y + rad < 0 || a.y - rad > p.h) continue;
+        let ny = a.y - rad - 5;
+        if (ny < 16) ny = Math.min(16, a.y - 8);                   // 圈顶在窗外时，名字贴在窗口上沿
+        const nx = Math.min(Math.max(a.x, 40), p.w - 40);
+        const label = r.count ? `${r.name} · ${r.count}` : r.name;
+        ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.strokeStyle = T.halo; ctx.strokeText(label, nx, ny);
+        ctx.fillStyle = rgba(r.color, r.count ? 0.95 : 0.55); ctx.fillText(label, nx, ny);
+      }
+    }
+    // 悬停：相连的点和线高亮
+    if (p.hover) {
+      const hi = p.idx.get(p.hover);
+      if (hi !== undefined) {
+        const hd = p.attrs[hi], hv = gp(p, hd.x, hd.y);
+        const nb = p.adj[hi];
+        ctx.lineWidth = 1; ctx.strokeStyle = rgba(T.hover, 0.5);
+        ctx.beginPath();
+        const cap = Math.min(nb.length, 600);
+        for (let k = 0; k < cap; k++) { const d = p.attrs[nb[k]]; if (p.hid[d.idx]) continue; const v = gp(p, d.x, d.y); ctx.moveTo(hv.x, hv.y); ctx.lineTo(v.x, v.y); }
+        ctx.stroke();
+        for (let k = 0; k < cap; k++) { const d = p.attrs[nb[k]]; if (p.hid[d.idx]) continue; const v = gp(p, d.x, d.y); dot(ctx, p, d, v.x, v.y, 0.6); }
+        ctx.strokeStyle = T.hover; ctx.lineWidth = 2; const sz = dot(ctx, p, hd, hv.x, hv.y, 1.5);
+        ctx.beginPath(); ctx.arc(hv.x, hv.y, sz + 3, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    // 搜索命中
+    if (p.match) {
+      ctx.lineWidth = 1.5;
+      let drawn = 0;
+      for (const id of p.match) {
+        if (drawn >= 400) break;
+        const d = p.attrs[p.idx.get(id)];
+        const v = gp(p, d.x, d.y);
+        if (v.x < -10 || v.x > p.w + 10 || v.y < -10 || v.y > p.h + 10) continue;
+        dot(ctx, p, d, v.x, v.y, 1.2);
+        ctx.strokeStyle = '#e8833a'; ctx.beginPath(); ctx.arc(v.x, v.y, 7, 0, Math.PI * 2); ctx.stroke();
+        drawn++;
+      }
+      ctx.textAlign = 'left';
+      for (const d of (p.matchTop || []).slice(0, 14)) {
+        const v = gp(p, d.x, d.y);
+        if (v.x < 0 || v.x > p.w || v.y < 0 || v.y > p.h) continue;
+        ctx.lineWidth = 3; ctx.strokeStyle = T.halo; ctx.strokeText(d.label, v.x + 10, v.y + 4);
+        ctx.fillStyle = T.ink; ctx.fillText(d.label, v.x + 10, v.y + 4);
+      }
+      ctx.textAlign = 'center';
+    }
+    // 刚被想起：外圈一闪一闪
+    if (p.recent.size) {
+      const ph = (t / 1500) % 1;
+      ctx.lineWidth = 1.6;
+      let drawn = 0;
+      for (const id of p.recent) {
+        const i = p.idx.get(id);
+        if (i === undefined || p.hid[i] || drawn > 200) continue;
+        const d = p.attrs[i], v = gp(p, d.x, d.y);
+        if (v.x < -20 || v.x > p.w + 20 || v.y < -20 || v.y > p.h + 20) continue;
+        const f = (ph + hash01(id)) % 1;
+        ctx.strokeStyle = rgba(T.ring, 0.85 * (1 - f)); ctx.beginPath(); ctx.arc(v.x, v.y, 4 + 14 * f, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = rgba(T.ring, 0.9); ctx.beginPath(); ctx.arc(v.x, v.y, Math.max(2.4, (p.sigma.scaleSize ? p.sigma.scaleSize(d.size) : d.size)), 0, Math.PI * 2); ctx.fill();
+        drawn++;
+      }
+    }
+    // 选中的点
+    if (p.sel) {
+      const i = p.idx.get(p.sel);
+      if (i !== undefined) {
+        const d = p.attrs[i], v = gp(p, d.x, d.y);
+        ctx.strokeStyle = T.hover; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.arc(v.x, v.y, 12, 0, Math.PI * 2); ctx.stroke();
+        ctx.textAlign = 'left'; ctx.lineWidth = 3; ctx.strokeStyle = T.halo; ctx.strokeText(d.label, v.x + 16, v.y + 4);
+        ctx.fillStyle = T.ink; ctx.fillText(d.label, v.x + 16, v.y + 4); ctx.textAlign = 'center';
+      }
+    }
+    ctx.restore();
+  }
+  drawCross(ctx, w, h);
+}
+function drawCross(ctx, w, h){
+  if (S.panes.length !== 2 || !S.panes[0].sigma || !S.panes[1].sigma || !S.cross.length) return;
+  const [A, B] = S.panes;
+  const oa = paneOffset(A), ob = paneOffset(B);
+  ctx.font = '11px "Microsoft YaHei",sans-serif'; ctx.textAlign = 'center';
+  let curves = 0;
+  for (const pr of S.cross) {
+    const va = gp(A, pr.a.x, pr.a.y), vb = gp(B, pr.b.x, pr.b.y);
+    const inA = va.x >= 0 && va.x <= A.w && va.y >= 0 && va.y <= A.h, inB = vb.x >= 0 && vb.x <= B.w && vb.y >= 0 && vb.y <= B.h;
+    const ax = oa.x + va.x, ay = oa.y + va.y, bx = ob.x + vb.x, by = ob.y + vb.y;
+    // 同色标记：两边各一个圈（在窗里的才画）
+    ctx.lineWidth = 2; ctx.strokeStyle = pr.color;
+    if (inA && !A.hid[pr.a.idx]) { ctx.beginPath(); ctx.arc(ax, ay, 9, 0, Math.PI * 2); ctx.stroke(); }
+    if (inB && !B.hid[pr.b.idx]) { ctx.beginPath(); ctx.arc(bx, by, 9, 0, Math.PI * 2); ctx.stroke(); }
+    if (!(inA && inB)) continue;
+    if (!pr.peer && ++curves > 8) continue;          // 共有的有二三十个，连线只画彼此 + 最重要的 8 个，其余只用同色圈标记，免得糊成一团
+    // 交界处的连线（贝塞尔弧线）
+    const mx = (ax + bx) / 2, my = Math.min(ay, by) - 30 - Math.abs(bx - ax) * 0.05;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(mx, my, bx, by);
+    ctx.setLineDash(pr.peer ? [] : [4, 4]); ctx.lineWidth = pr.peer ? 1.8 : 1.2; ctx.strokeStyle = pr.color; ctx.globalAlpha = 0.8;
+    ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    const ly = (ay + by) / 2 - 15 - Math.abs(bx - ax) * 0.03;
+    ctx.lineWidth = 3; ctx.strokeStyle = T.halo; ctx.strokeText(pr.label, mx, ly);
+    ctx.fillStyle = pr.color; ctx.fillText(pr.label, mx, ly);
+  }
+}
+let lastDraw = 0;
+function frame(t){
+  const animating = S.panes.some(p => p.recent.size);
+  if (needDraw || (animating && t - lastDraw > 33)) {
+    needDraw = false; lastDraw = t;
+    for (const p of S.panes) { sizePane(p); if (p.sigma) drawBg(p); }
+    drawFg(t);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ───────────── 载入 / 切换 ───────────── */
+const graphCache = new Map();                  // brain → {data, at}
+async function fetchGraph(brain, force){
+  const c = graphCache.get(brain);
+  if (!force && c && Date.now() - c.at < 5 * 60 * 1000) return c.data;
+  const t0 = performance.now();
+  const data = await brainApi('graph', {brain, limit: 0, compact: 1});
+  PERF[brain] = Object.assign(PERF[brain] || {}, {fetchParseMs: Math.round(performance.now() - t0)});
+  graphCache.set(brain, {data, at: Date.now()});
+  return data;
+}
+async function setMode(mode, force){
+  const gen = ++S.gen;
+  const t0 = performance.now();
+  S.mode = mode;
+  document.querySelectorAll('#modeSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+  teardown();
+  history.replaceState({}, '', location.pathname + location.search + '#' + mode);
+  const brains = mode === 'both' ? ['whale', 'sister'] : [mode];
+  S.panes = brains.map(newPane);
+  renderLegend();
+  const libP = loadVendor().then(() => { PERF.libMs = Math.round(performance.now() - t0); }, e => e);   // 画图库和数据同时取，不排队
+  const dataP = S.panes.map(p => fetchGraph(p.brain, force).then(d => ({d}), e => ({e})));
+  const libErr = await libP;
+  if (libErr instanceof Error) { S.panes.forEach(p => setPaneMsg(p, '画图库没加载上：' + libErr.message, true, () => setMode(mode, force))); return; }
+  await Promise.all(S.panes.map(async (p, k) => {
+    try {
+      const r = await dataP[k];
+      if (r.e) throw r.e;
+      const data = r.d;
+      if (gen !== S.gen) return;
+      setPaneMsg(p, '正在摆点……');
+      await new Promise(r2 => setTimeout(r2, 0));                     // 让「正在摆点」先画出来
+      if (gen !== S.gen) return;
+      sizePane(p);
+      setEdgeColors(p);
+      mountGraph(p, data);
+    } catch (e) {
+      if (gen !== S.gen) return;
+      setPaneMsg(p, '这个脑子暂时读不到：' + e.message + (e.status === 503 ? '（记忆服务还没有索引）' : '') + '。可以先确认记忆服务和桥接在运行，再点重试。', true, () => setMode(mode, true));
+    }
+  }));
+  if (gen !== S.gen) return;
+  S.cross = crossPairs();
+  renderLegend();
+  if (S.query) runSearch();
+  dirty();
+  PERF.totalMs = Math.round(performance.now() - t0);
+  requestAnimationFrame(() => requestAnimationFrame(() => { PERF.firstFrameMs = Math.round(performance.now() - t0); }));
+}
+async function refreshRecent(){
+  if (document.hidden) return;
+  const gen = S.gen;
+  for (const p of S.panes.slice()) {
+    if (!p.data) continue;
+    try {
+      const j = await brainApi('graph', {brain: p.brain, recentOnly: 1, recent: p.data.recentMin || 30});
+      if (gen !== S.gen) return;
+      p.recent = new Set((j.recent || []).filter(id => p.idx.has(id)));
+      refreshPane(p);
+    } catch { /* 这一轮读不到就等下一轮 */ }
+  }
+  renderRecent();
+}
+
+/* ───────────── 界面接线 ───────────── */
+document.querySelectorAll('#modeSeg button').forEach(b => { b.onclick = () => { if (b.dataset.mode !== S.mode) setMode(b.dataset.mode); }; });
+document.querySelectorAll('#colorSeg button').forEach(b => { b.onclick = () => {
+  S.colorBy = b.dataset.color;
+  document.querySelectorAll('#colorSeg button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  colorCache.clear(); refreshAll(); renderLegend();
+}; });
+$('#linkSel').onchange = e => { S.linkMode = e.target.value; refreshAll(); };
+$('#lodChk').onchange = e => { S.lod = e.target.checked; S.panes.forEach(p => { p.lodBucket = -1; }); refreshAll(); };
+$('#regionChk').onchange = e => { S.showRegions = e.target.checked; dirty(); };
+$('#reloadBtn').onclick = () => { graphCache.clear(); setMode(S.mode, true); };
+$('#sideHead').onclick = () => { const s = $('#side'); s.classList.toggle('collapsed'); $('#stage').classList.toggle('sidecol', s.classList.contains('collapsed')); $('#sideTog').textContent = s.classList.contains('collapsed') ? '展开' : '收起'; };
+let qTimer = 0;
+$('#q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(runSearch, 160); });
+$('#q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { const d = $('#results div[data-i]'); if (d) d.click(); }
+  if (e.key === 'Escape') { $('#q').value = ''; runSearch(); }
+});
+document.addEventListener('click', e => { if (!e.target.closest('#searchWrap')) $('#results').style.display = 'none'; });
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); }
+  if (e.key === 'Escape' && document.activeElement !== $('#q')) selectNode(null);
+});
+$('#themeBtn').onclick = () => { applyTheme(S.theme === 'dark' ? 'light' : 'dark'); S.cross = crossPairs(); refreshAll(); renderShared(); dirty(); };
+window.addEventListener('resize', () => { S.panes.forEach(sizePane); dirty(); });
+try {                                           // 窗格大小变了（收起图例、改窗口）：让 sigma 重新量一下画布
+  new ResizeObserver(() => { S.panes.forEach(p => { sizePane(p); try { p.sigma && p.sigma.resize(); } catch { /* 还没建好 */ } }); dirty(); }).observe($('#panes'));
+} catch { /* 老浏览器没有 ResizeObserver：只靠 resize 事件 */ }
+
+(function init(){
+  const h = (location.hash || '').replace('#', '');
+  const m = ['whale', 'sister', 'both'].includes(h) ? h : (new URLSearchParams(location.search).get('brain') || 'whale');
+  requestAnimationFrame(frame);
+  setMode(['whale', 'sister', 'both'].includes(m) ? m : 'whale');
+  setInterval(refreshRecent, RECENT_REFRESH_MS);
+})();
+</script>
+</body>
+</html>

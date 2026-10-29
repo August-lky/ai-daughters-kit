@@ -1,6 +1,13 @@
 // 读谱：和弦解析、调性、简谱记号、小节划分、八度纠错。不跑模型，直接喂数据。
 import assert from 'node:assert/strict';
-import { parseChord, detectKey, jianpu, renderCard, spellFor } from '../src/score.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { parseChord, detectKey, jianpu, renderCard, spellFor, friendlyToolError, BILI_BLOCKED_HINT } from '../src/score.js';
+
+const BILI_WATCH = 'E:\\qq-bridge\\plugins-ext\\dsh-bili-whale\\tools\\commands\\bili-watch.mjs';
 
 let passed = 0;
 const ok = (name) => { passed++; console.log(`✅ ${name}`); };
@@ -57,6 +64,41 @@ const ok = (name) => { passed++; console.log(`✅ ${name}`); };
   assert.match(rows[0], /0:10 \| C\(1\) F\(4\)\s+\| 1 \| 2 \| 3 \| 4$/, '第一小节 1 2 3 4，泛音被压回去');
   assert.match(rows[1], /C\(1\)\?\s+\| 5 \| - \| - \| 0$/, '第二小节 5 拖三拍、和弦不确定带 ?');
   ok('排谱：规整小节、拖音、没唱、泛音纠回、和弦级数');
+}
+
+{
+  // 2026-10-29 M11：B 站回网页 / 堆栈时给她一句人话
+  const raw = `file:///C:/x/bili-watch.mjs:27\nconst view = await (await fetch(u)).json()\n                                       ^\n\nSyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON\n    at JSON.parse (<anonymous>)\n    at async file:///C:/x/bili-watch.mjs:27:14\n\nNode.js v24.21.0`;
+  const a = friendlyToolError(raw);
+  assert.equal(a, BILI_BLOCKED_HINT);
+  assert.doesNotMatch(a, /DOCTYPE|at |file:/);
+  assert.equal(friendlyToolError('<!DOCTYPE html> HTTP 412'), `${BILI_BLOCKED_HINT}（HTTP 412）`, '带上状态码');
+  assert.equal(friendlyToolError(`${BILI_BLOCKED_HINT}（HTTP 412）\n`), `${BILI_BLOCKED_HINT}（HTTP 412）`, '插件已经说了人话就用它那句');
+  assert.match(friendlyToolError('TypeError: x is undefined\n    at foo (C:\\a\\b.mjs:3:9)'), /^这次没弄成.*可以过一会儿再试/, '别的堆栈也不原样给');
+  assert.equal(friendlyToolError('前面还有一首在扒，等会儿再来'), '前面还有一首在扒，等会儿再来', '本来是人话的不动');
+  ok('读谱 / B 站报错：网页和堆栈换成人话');
+}
+
+{
+  // 2026-10-29 M11：插件 bili-watch.mjs 遇到 B 站回网页时不再 .json() 崩，说人话（假 fetch、假凭据、假 ffmpeg，不联网）
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bili-watch-guard-'));
+  fs.mkdirSync(path.join(tmp, '.bili-ai'));
+  fs.writeFileSync(path.join(tmp, '.bili-ai', 'credentials.json'), JSON.stringify({ sessdata: 'fixture', bili_jct: 'fixture', buvid3: 'fixture' }));
+  const run = (status, type, body) => {
+    const pre = path.join(tmp, `fake-fetch-${status}.mjs`);
+    fs.writeFileSync(pre, `globalThis.fetch = async () => new Response(${JSON.stringify(body)}, { status: ${status}, headers: { 'content-type': ${JSON.stringify(type)} } });\n`);
+    return spawnSync(process.execPath, ['--import', pathToFileURL(pre).href, BILI_WATCH, 'BV1xxxxxxxxx', '3x3', tmp],
+      { encoding: 'utf8', env: { ...process.env, USERPROFILE: tmp, HOME: tmp, FFMPEG: process.execPath }, timeout: 30000, windowsHide: true });
+  };
+  const r = run(412, 'text/html; charset=utf-8', '<!DOCTYPE html><html>blocked</html>');
+  assert.equal(r.status, 6, r.stderr);
+  assert.match(r.stderr, /B 站这会儿不让看这条（可能是风控或者需要登录），可以过一会儿再试，或者换一条（HTTP 412）/);
+  assert.doesNotMatch(r.stderr, /DOCTYPE|not valid JSON|\n\s+at /);
+  const r2 = run(200, 'text/html', '<!DOCTYPE html>');
+  assert.equal(r2.status, 6);
+  assert.match(r2.stderr, /（HTTP 200）/, '状态码 200 但回的是网页也拦住');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  ok('bili-watch：B 站回网页时说人话、带状态码');
 }
 
 console.log(`全部通过：${passed} 组`);

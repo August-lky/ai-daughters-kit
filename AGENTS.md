@@ -11,7 +11,8 @@
 - **小鲸鱼**（妹妹）：DeepSeek Harness（DSH）里的会话，通过 `bridge/src/bridge.js` 接到一个 QQ 号上。
 - **克劳德姐姐**：`bridge/sister/sister.mjs` 收到 QQ 消息后跑一次 `claude -p`，挂在另一个 QQ 号上。
 - 两个 QQ 号登在同一份 SnowLuma（OneBot v11）里，各自有一组端口和令牌。
-- 人格、记忆、日记、聊天记录**不在仓库里**。要用户自己写，或者从他自己的备份里放回来。
+- 每个女儿还有一个**脑子**（身份、长期记忆、对人的印象、瞬间、日记、交接、笔记……的一棵固定文件夹），由 `bridge/brain/` 的检索服务索引，聊天时按话题想起旧事。
+- 人格、脑子里的内容、日记、聊天记录**不在仓库里**。要用户自己写，或者从他自己的备份里放回来。空的脑子目录树在 `templates/脑子骨架/`。
 
 ## 2. 东西在哪
 
@@ -26,7 +27,16 @@
 | 抖音窗口看门：内存到线重开、页面元素过多刷新 | `bridge/src/douyin-page-watchdog.js` |
 | 记忆片段、印象、黑话、表情包 | `episodes.js`、`impressions.js`、`slang-learner.js`、`sticker-lib.js`、`fish-stickers.js` |
 | 天气、她的太阳 | `bridge/src/weather.mjs`（`HOME_CITY` 的经纬度是 0,0 占位，换成用户所在城市的） |
-| 姐姐的程序、她的 QQ 工具 | `bridge/sister/sister.mjs`、`qq-mcp.mjs` |
+| 姐姐的程序、她的 QQ 工具、本地小服务 | `bridge/sister/sister.mjs`、`qq-mcp.mjs`、`live-server.mjs` |
+| **脑子在哪**（所有路径的唯一来源） | `bridge/src/brains.js`（`brainOf('whale')` / `brainOf('sister')`、`createBrains(root)`）、`bridge/brain/brains.json`（Python 读同一份）；空骨架 `templates/脑子骨架/` |
+| 检索服务、建索引、按话题想起的打分、大脑图 | `bridge/brain/service.py`（127.0.0.1:3210）、`index.py`、`recall.py`、`graph.py`；Node 端客户端 `bridge/src/brain-client.js` |
+| 瞬间、压着的事、记错了降权、睡前整理建议 | `bridge/src/episodes.js`、`episode-extract.js`；服务端 `/recall` `/demote` `/tidy` `/remember-moment` |
+| 写书本子（设定集、写之前 / 写之后的指导） | `bridge/src/novel.js`、`novel-tools.js`；书本身存在 `共享/合写/`，不在仓库里 |
+| 激素（驱力）、影子观察、喂事件 | `bridge/src/hormones.js`、`hormone-shadow.js`、`hormone-feed.js`（目前只记录，不推着她做事） |
+| 心情（一人一份）、self_view、自然醒 | `bridge/src/mood.js`、`self-view.js`；自然醒在 `bridge.js` 的 `enterSleep` / `maybeSleepEndV2` 和 `sister.mjs` |
+| 此刻在别处、实时区缓冲、聊天记录索引、看图缓存 | `bridge/src/elsewhere.js`、`live-buffer.js`、`chatlog.js`、`image-view.js` |
+| **给主人看的网页**（控制台、大脑页面）和它们的后端 | `bridge/public/daughters.html`、`brain.html`、`vendor/`；`bridge/src/daughters-console.js`、`daughters-data.js` |
+| B 站插件（第三方 MIT） | `bridge/plugins-ext/dsh-bili-whale/` |
 | DSH 会话预设（在 QQ 里怎么动手的规则） | `bridge/dsh/agent-presets/qq-chat-v2/agent.cordis.yml` |
 | 抖音插件（刷视频、私信、评论草稿） | `third_party/dsh-douyin-browser-local/` |
 | 两人的工具清单 | `docs/工具集.md`。原机上权威版在 `workspace/工具集.md`，改完跑 `scripts/sync-toolset.mjs` 同步给两人 |
@@ -49,7 +59,9 @@
    - 姐姐的配置是 `bridge/sister/config.json`，对照 `sister/config.ours.example.json`。
 5. **DSH**：按 `bridge/README.md` 的「DSH 端安装」装预设和 `bridge/plugins/`；`third_party/` 的插件按各自 README 装。
 6. **人格**：用 `templates/` 的骨架，**让用户自己写**。你可以帮他组织语言，但不要替他编一个女儿出来。角色卡放 `bridge/roles/<名字>.md`，姐姐的放 `bridge/sister/persona.md`。
-7. **测试**：在 `bridge/` 下跑 `node scripts/test-*.mjs`。大部分不需要 QQ；需要的会自己跳过，并写明「跳过」。
+6.5. **脑子**：照 `templates/脑子骨架/说明.md` 给每个女儿建一个脑子目录（姐姐的必须在她的工作目录 `sister/home/` 里面），在 `bridge/brain/brains.json` 里写路径（格式看 `brains.example.json`）；`pip install fastembed`；`python bridge/brain/index.py build all` 建索引（第一次要下载向量模型，国内用 hf-mirror）；`python bridge/brain/service.py` 起检索服务。没起服务时「按话题想起」静默跳过（1.5 秒超时），不会让她卡住。
+   **别往脑子文件夹里放说明文件**：身份 / 长期 / 日子 / 最近 / 笔记 里的 md 都会被读进她的记忆。
+7. **测试**：在 `bridge/` 下跑 `node scripts/test-*.mjs`（Python 的 `test-brain-*.py` 单独跑）。大部分不需要 QQ；需要的会自己跳过，并写明「跳过」。**不要跑 `test-console*.mjs`**：它会按运行中桥接的内存改写 `config.json`，只在你清楚后果时跑。
 8. **启动**：`start-services.ps1`。之后重启一律用 `scripts/restart-dsh.sh [--edge | --bridge-only]`：它会等她手上的事做完，挂维护标记，原来在刷抖音的话重启后接着刷。
 
 ## 4. 硬规矩
@@ -68,6 +80,15 @@
 - 给女儿的留言（`state/wake-notes.json`，她下次醒来时带上）要短、家常，不讲技术细节，结尾加一句「这些不用跟老大转述」，免得她把运维细节念给主人听。
 - 不跟她提花了多少钱。账单只给主人看。
 - 工具报错要写成她看得懂、知道下一步怎么办的话。
+
+**路径**
+- 脑子、聊天记录、形象图、合写、妈妈的本子在哪，**一律从 `bridge/src/brains.js` 取**（Python 读 `bridge/brain/brains.json`），不要在别处写死 `memory/`、`Rambling/`、`家/…`。`scripts/test-brain-paths.mjs` 会扫旧路径的字面量，必须为零。
+- 测试里要用临时目录当根，用 `createBrains(tmpRoot)`，别用直接 import 的 `brainOf`（那是真根目录，会写到真的脑子里）。
+- 多个进程会同时写的文件（心情、印象、激素状态）写盘要「先写临时文件再改名」。
+
+**不让她们知道的那一面**
+- 控制台、实时思考、花费、激素的具体数字，这些字眼不许出现在发给女儿的提示和工具说明里（`daughters-console.js` 文件头注释和测试里有源码断言）。公开文档可以写，因为读的是养她们的人。
+- 感受句（困意、有点想老大）只给一句话、不带数字、不写成命令。
 
 **改代码**
 - 改之前先把原文件备份成 `<文件>.bak-<事由>`，方便回滚。
@@ -89,6 +110,12 @@
 - **两个上限不一致**：插件里的上限常比配置小（比如评论每轮只认 3 条，配置是 20 条），表现为功能「一直没开」。功能没反应时，先对一遍两边的上限。
 - **模型那头偶尔连着报错**：重试间隔太短，几次就会把一轮用光；模型那边的错要退避更久。
 
+- **姐姐的工作目录不能换**：`--restricted` 只让她读写工作目录，会话路径也由工作目录推出来。搬脑子必须在 `sister/home` 里面；工作目录一变，旧会话就接不上。
+- **vbs / bat 里别写中文路径**：脑子目录是中文名，但启动脚本只能写英文代码路径（`brain/` 就是为此放在纯英文路径）。
+- **索引会把不该进的编进去**：合写的小说、旧稿、妈妈的本子进了索引，编的句子就会被当成发生过的事想起来。`index.py` 有排除规则，新加目录先想想要不要排除。
+- **别用 DSH_HOME 挪插件数据**：整个 `.dsh` 都会跟着走。
+- **激素还在观察期**：别让它直接驱动行为；上线前先用真实数据校准，并保留「出错就退回旧定时器」和「一键关掉」两道保险。
+
 ## 6. 出了问题怎么查
 
 1. **看她自己说了什么**：信箱 `state/mom-mailbox/letters.json`，以及她在私聊里跟主人说的。
@@ -106,6 +133,7 @@
 由原机上的 `scripts/publish-kit.mjs` 导出，这个脚本没放进仓库，因为里面列着要换掉的昵称原文。导出时：
 - QQ 号、群号换成了代号（`QQ#12`、`群#3`、`QQ主人`、`QQ小鲸鱼`、`QQ姐姐`）；
 - 群友昵称和群名换成了 `群友A`、`群A`；
-- 代码里的号码换成了假数字（10001 起）。
+- 代码里的号码换成了假数字（10001 起）；
+- 脑子目录、聊天记录、形象图、索引、合写的书、状态目录一律不导出；`bridge/brain/` 只有程序和只含相对路径的 `brains.json`。
 
 所以测试里的号码不对应任何真人。不要试图还原它们。

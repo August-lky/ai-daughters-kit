@@ -12,7 +12,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, basename, dirname } from 'node:path'
+import { join, basename, dirname, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -222,8 +222,14 @@ function blank() {
 }
 
 function loadStore(sid) {
+  return loadStoreFile(storePath(sid))
+}
+
+// ⚠ 本机补丁（2026-10-29）统一记忆：从一个具体的文件读库（loadStore 的原身）。sharedMemoriesFor 要读「旧会话合并档」这种
+// 不在 fish-memory/ 目录下、按绝对路径给的文件时用它；其余调用方照旧走 loadStore(sid)。
+function loadStoreFile(file) {
   try {
-    const raw = JSON.parse(readFileSync(storePath(sid), 'utf8'))
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
     return {
       version: 2,
       policy: fitPolicy(null, raw.policy).policy,
@@ -251,10 +257,14 @@ function sharedMemoriesFor(sid, ownMemories) {
     const byKey = new Map()
     const out = []
     for (const [other, label] of Object.entries(group.sessions)) {
-      if (other === sid || !existsSync(storePath(other))) continue
-      for (const m of loadStore(other).memories) {
+      // ⚠ 本机补丁（2026-10-29）统一记忆：键可以是绝对路径（桥接把「旧会话合并档」——所有不在用的老会话合在一起、同一个事实键只留最新的——
+      // 以「以前的会话」的名义写进 links），这时直接读那个文件；普通会话 id 照旧走 fish-memory/ 目录。
+      const abs = isAbsolute(other)
+      if (other === sid) continue
+      if (abs ? !existsSync(other) : !existsSync(storePath(other))) continue
+      for (const m of (abs ? loadStoreFile(other) : loadStore(other)).memories) {
         if (!m || m.refinedSkip || m.已被取代 || !m.text) continue
-        const copy = { ...m, id: 'shared:' + other + ':' + m.id, text: '（' + label + '里记的）' + m.text, 来自会话: other }
+        const copy = { ...m, id: 'shared:' + (abs ? 'archive' : other) + ':' + m.id, text: '（' + label + '里记的）' + m.text, 来自会话: abs ? '旧会话合并档' : other }
         const k = m.事实键
         if (k) {
           if (ownKeys.has(k)) continue
@@ -557,7 +567,7 @@ const 跳过的小节 = /阅读须知|使用说明|怎么用|目录|索引|范�
 //   2026年9月17日                            （带年）
 //   09-17 / 09.17                           （月-日：年份按「最近的过去」算，标记成猜的）
 //   8月26日 / 9月6号                         （同上）
-// ⚠ 护栏：`-` 那种**要求月份两位数**（09-17 ✓），免得把「1/2」「10-2」这种当成日期 ✗
+// ⚠ 护栏：群友69 那种**要求月份两位数**（09-17 ✓），免得把「1/2」「10-2」这种当成日期 ✗
 // 返回 { at, 猜年 }；认不出返回 null
 function 抠日期详(文本) {
   const s = String(文本 || '')
@@ -604,7 +614,7 @@ function 抠日期详(文本) {
   }
   for (const m of s.matchAll(/(20\d{2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})/g)) 收(m, Number(m[1]), Number(m[2]), Number(m[3]))
   for (const m of s.matchAll(/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/g)) 收(m, Number(m[1]), Number(m[2]), Number(m[3]))
-  // 月-日：**月和日都要两位数、分隔符必须是 `-`** —— 这是「档案里写日期的样子」（09-17）✓
+  // 月-日：**月和日都要两位数、分隔符必须是 群友69** —— 这是「档案里写日期的样子」（09-17）✓
   //   一刀切掉两种误判：「10/2」（分数）和「10-2」（减法/价格区间）✗
   //   单数字的日子走下面的中文形式（8月26日）✓
   for (const m of s.matchAll(/(?:^|[^\d])(\d{2})\s*-\s*(\d{2})(?![\d])/g)) 收(m, null, Number(m[1]), Number(m[2]), m[0].indexOf(m[1]))
@@ -1022,7 +1032,7 @@ async function 问模型(ctx, agent, 系统, 用户, 最多, 指定) {
 }
 
 // ⭐ 2026-09-21 晚（她的主意）：**提炼顺手出日期** ✓
-//   档案里那些「什么时候的事」模型是看得见的（「8月26日」「09-17」「去年冬天」），
+//   档案里那些「什么时候的事」模型是群友252的（「8月26日」「09-17」「去年冬天」），
 //   而导入时按正文硬抠只能抠到 188 条。让它在改写的同一口气里给出日期 —— **一次模型调用都不多花** ✓
 //   ⚠ 一定要能容忍它不给、给错、给个「不知道」 —— 缺了就当没这条，其它照收 ✓
 function 取日期(尾) {
@@ -2393,7 +2403,7 @@ const 真重复门槛 = 0.85
 //   它们既不会被删、也不会淡掉（淡忘只让**排序**往后掉，词对得上照样回来），
 //   于是**过时的信息会一直当成现在的事实注进去** ✗
 //
-//   → 标上「已被取代」就不再参与召回；东西**留着**（设置页看得见、能撤销）✓
+//   → 标上「已被取代」就不再参与召回；东西**留着**（设置页群友252、能撤销）✓
 //   ⚠ 这个标记**只影响注入**，不动淡忘 —— 没被取代的照样走淡忘 ✓
 function 标作废(m, 被谁, 为什么) {
   if (!m || m.已被取代) return false
@@ -2498,14 +2508,14 @@ const 召回重复门槛 = 0.8
 function recall(data, query, now, sid) {
   const policy = data.policy
   // ⭐ 2026-09-21（E）：**提炼判成「跳过」的，不再参与召回** ✓
-  //   它们还留在库里（设置页看得见、能「重跑」放回来），只是不再被想起来。
+  //   它们还留在库里（设置页群友252、能「重跑」放回来），只是不再被想起来。
   //   老代码把「跳过」当成一个纯展示标记 —— 判了跳过照样会被召回来，等于白判 ✗
   //
   // ⭐⭐ 2026-09-23：**「已被取代」的也不再参与召回** ✓
   //   有些记忆记的是**当时的状态**，会变（「拼团还没开」「暂时读不到视频列表」）。
   //   它们既不会被删、也不会淡掉（淡忘只让排序往后掉，词对得上照样回来），
   //   于是**过时的信息会一直当现在的事实注进去** ✗
-  //   → 标了「已被取代」的就不注入；东西还留着，设置页看得见、能撤销 ✓
+  //   → 标了「已被取代」的就不注入；东西还留着，设置页群友252、能撤销 ✓
   const memories = (Array.isArray(data.memories) ? data.memories : []).filter((m) => !m || (!m.refinedSkip && !m.已被取代))
   // ⭐ 先把「这个会话的搭配表」挂上，再切词 —— 半个词（天去／去公）不该当线索 ✓
   //   （记忆那边的词表也走同一张搭配表，两边才配得上）
@@ -3205,9 +3215,9 @@ function buildMemoryList(ctx) {
             related: Array.isArray(m.related) ? m.related : null,
             refined: !!m.refinedAt,
             refinedSkip: !!m.refinedSkip,
-            // ⭐⭐ 2026-09-23：「已被取代」—— 界面上要看得见、能撤销 ✓
+            // ⭐⭐ 2026-09-23：「已被取代」—— 界面上要群友252、能撤销 ✓
             已被取代: m.已被取代 ? { 为什么: String(m.已被取代.为什么 || ''), 作废于: m.已被取代.作废于 || null } : null,
-            // ⭐⭐ 2026-09-23：**事实键** —— 界面上看得见（同键的条目一眼能认出来）✓
+            // ⭐⭐ 2026-09-23：**事实键** —— 界面上群友252（同键的条目一眼能认出来）✓
             事实键: typeof m.事实键 === 'string' && m.事实键 ? m.事实键 : null,
             // ⚠ 「清洗补键」洗过的记号（含判了留空的）——
             //   界面上要能算清「还剩几条要洗」，不然按钮上的数字永远不消 ✗
@@ -3773,7 +3783,7 @@ export function apply(ctx) {
   // ⚠⚠ 2026-09-21：remember 工具**不再在这里全局注册**了。
   //
   // 原来就是这一句 `ctx.tools.register(makeRememberTool(ctx))` —— 挂在插件全局上，
-  // 所以每个会话都看得见它，**跟会话的记忆开关无关**。后果见 mountFor 里那段注释。
+  // 所以每个会话都群友252它，**跟会话的记忆开关无关**。后果见 mountFor 里那段注释。
   // 现在挪进 mountFor，挂在 agent 自己的 ctx 上，开关一关就跟着卸掉 ✓
   //
   // （这里留个记号，免得以后有人以为漏了。）
@@ -5323,7 +5333,7 @@ export function apply(ctx) {
                 if (m.refineTries >= 最多试) {
                   m.refinedAt = now
                   m.refinedSkip = true
-                  m.refineFailed = true // 试满了还是不行，标出来让她看得见
+                  m.refineFailed = true // 试满了还是不行，标出来让她群友252
                 }
                 continue
               }

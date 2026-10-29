@@ -15,7 +15,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-const BILI_TOOLS = 'C:\\Users\\admin\\Documents\\deepseek-harness\\default-workspace\\plugins\\dsh-bili-whale\\tools\\bili.mjs';
+const BILI_TOOLS = 'E:\\qq-bridge\\plugins-ext\\dsh-bili-whale\\tools\\bili.mjs';
 const BILI_CWD = path.dirname(BILI_TOOLS);
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 

@@ -1,5 +1,5 @@
-// 把 ~/.dsh/sessions/--E-qq-bridge-state-agents--/ 下所有旧会话记录里的"瞬间"抽进 state/episodes/。
-// 只写 state/episodes/（<key>.jsonl + extracted.json 增量索引），不碰桥接和 DSH。
+// 把 ~/.dsh/sessions/--E-qq-bridge-state-agents--/ 下所有旧会话记录里的"瞬间"抽进 脑子的 瞬间/。
+// 只写 脑子的 瞬间/（<key>.jsonl + extracted.json 增量索引），不碰桥接和 DSH。
 // 用法：node scripts/backfill-episodes.mjs [--force] [--dry] [--dir <sessionsDir>]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +13,7 @@ const dirIdx = args.indexOf('--dir');
 const sessionsDir = dirIdx >= 0 && args[dirIdx + 1] ? args[dirIdx + 1] : DEFAULT_SESSIONS_DIR;
 
 const env = loadExtractEnv();
-const store = dry ? null : createEpisodeStore({ dir: env.episodesDir, skewMs: env.skewMs, ownerKey: env.ownerQQ ? `private:${env.ownerQQ}` : '' });
+const store = dry ? null : createEpisodeStore({ dir: env.episodesDir, pressedFile: env.pressedFile, skewMs: env.skewMs, ownerKey: env.ownerQQ ? `private:${env.ownerQQ}` : '' });
 const sids = fs.existsSync(sessionsDir)
   ? fs.readdirSync(sessionsDir).filter((d) => fs.existsSync(path.join(sessionsDir, d, 'session.v4.jsonl.zstd'))).sort()
   : [];

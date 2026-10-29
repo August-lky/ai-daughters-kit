@@ -29,7 +29,7 @@ description: 原生设置按钮控制的有限自主刷抖音、共享人格兴�
 - `douyin_search` 返回可见结果 index、作品 ID、作者和文案；`douyin_open_video` 打开当前结果。`douyin_next` / `douyin_previous` 仅在 `changed=true` 时算确认换片。
 - `douyin_observe` 提供实际采样附件，以 `imageStatus` 为准；少量帧不能证明看完整条或听懂声音。`douyin_play` / `douyin_pause` 回读实际播放状态。
 - `douyin_media_status` 读取开关与后端。音频可不接入，默认关闭；`douyin_listen` 仅在用户开启后录取当前视频最多十秒音轨，不录麦克风或其他程序。MiMo / MiniMax Key 只是可选音频配置，不是刷视频必需项。
-- `douyin_chat_observe` 只采集许可会话中指定表情或分享卡片。分享视频采样受视频时间限制，封面不等于全片；普通图片、收到的语音等未支持类型不得假称已理解。
+- `douyin_chat_observe` 只采集许可会话中指定表情或群友148。分享视频采样受视频时间限制，封面不等于全片；普通图片、收到的语音等未支持类型不得假称已理解。
 - `douyin_forward_video` 普通模型分支只提示人工入口；旧手动转发仍需明确选片选人授权。自主分享通过独立许可服务，不借普通工具扩大权限。
 - `douyin_recall` 检索中央记忆，`douyin_remember` 保存用户要求的笔记；历史记录不是用户确认的事实。日报工具仅生成或读取报告，不启动观看。
 

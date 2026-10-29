@@ -62,17 +62,17 @@ const sleepSeg = seg(bridgeSrc, "url.pathname === '/api/socialV2/sleep') {", "ur
   assert.equal(note.history().length, 30);
   assert.equal(note.read().text, '第 39 版');
   ok('便签：有内容时提示块原样带上；历史只留最近 30 份');
-  // 接线：文件在她的本子目录、历史在 state/agents/note-history、只在主人私聊唤醒里带、放在消息快照之前、端点 + 工具在
-  assert.match(bridgeSrc, /STICKY_NOTE_FILE = path\.join\(ROOT, 'memory', '小鲸鱼', '便签\.md'\)/);
+  // 接线：文件在她脑子的 最近/、历史在 state/agents/note-history、所有会话唤醒都带（2026-10-29 记忆统一；非主人私聊注明有些是私聊里记的）、放在消息快照之前、端点 + 工具在
+  assert.match(bridgeSrc, /STICKY_NOTE_FILE = WHALE_BRAIN\.sticky;/);
   assert.match(bridgeSrc, /STICKY_NOTE_HISTORY_DIR = path\.join\(STATE_DIR, 'agents', 'note-history'\)/);
-  assert.match(wakeSeg, /const stickyLine = isOwnerPrivateSession \? `\$\{stickyNote\.promptBlock\(\)\}\\n\\n` : '';/);
+  assert.match(wakeSeg, /const stickyLine = `\$\{stickyNote\.promptBlock\(isOwnerPrivateSession \? '' : STICKY_NOT_PRIVATE_NOTE\)\}\\n\\n`;/);
   assert.match(wakeSeg, /\+ preSleepLine \+ commentLine \+ stickyLine \+ recentSaidLine(?: \+ impressionLine)?;/);
   assert.match(bridgeSrc, /url\.pathname === '\/api\/socialV2\/note'/);
   assert.match(mcpSrc, /'qq_note',/);
   const noteTool = seg(mcpSrc, "'qq_note',", "'qq_go_to',");
   assert.match(noteTool, /正在聊的、刚被告知的、答应了还没做的放便签；想长期留着的用 remember；心里动了一下的用 qq_keep_moment/);
-  assert.match(noteTool, /群里的唤醒不带它/);
-  ok('接线：便签只在主人私聊唤醒里带（base 末尾、消息快照之前）；端点 /api/socialV2/note；qq_note 描述含分工提示');
+  assert.match(noteTool, /不是主人私聊时会注明里面有些是私聊里记的/);
+  ok('接线：便签所有会话唤醒都带（非主人私聊注明）（base 末尾、消息快照之前）；端点 /api/socialV2/note；qq_note 描述含分工提示');
 }
 
 // ── 2. 搬家交接 ──
@@ -98,11 +98,11 @@ const sleepSeg = seg(bridgeSrc, "url.pathname === '/api/socialV2/sleep') {", "ur
   assert.ok(big.text.endsWith('199'), '留下的是最新的');
   ok('交接原文：总长超过上限时从最旧的丢，留最新的');
   assert.match(handoffSeg, /handoffRecentLines\(getSocialV2State\(key\)\.recentMessages \|\| \[\], \{\n\s+nowMs: Date\.now\(\), hours: 3, minLines: 200, maxChars: 24000, lineChars: 300,/);
-  assert.match(handoffSeg, /if \(isOwner\) \{ const n = stickyNote\.read\(\); if \(n\.exists && n\.text\.trim\(\)\) parts\.push\(`【便签（你自己记的，随你改）】\\n\$\{n\.text\.trim\(\)\}`\); \}/);
+  assert.match(handoffSeg, /\{ const n = stickyNote\.read\(\); if \(n\.exists && n\.text\.trim\(\)\) parts\.push\(`【便签（你自己记的，随你改）】\\n\$\{isOwner \? '' : STICKY_NOT_PRIVATE_NOTE \+ '\\n'\}\$\{n\.text\.trim\(\)\}`\); \}/);
   assert.match(handoffSeg, /【这里最近的聊天（原文，最后 \$\{recentPick\.lines\} 句）】/);
   assert.doesNotMatch(handoffSeg, /slice\(0, 160\)/);
   assert.match(read('src/episodes.js'), /const title = '【你带走的几个瞬间（你亲身经历过的）】\\n';/);
-  ok('接线：交接按 3 小时 / 200 句 / 300 字 / 2.4 万字取原文，主人私聊带便签，瞬间块标明"你亲身经历过的"');
+  ok('接线：交接按 3 小时 / 200 句 / 300 字 / 2.4 万字取原文，所有会话都带便签，瞬间块标明"你亲身经历过的"');
   // 换会话前的提醒：中性
   const prep = seg(bridgeSrc, 'const OWNER_MOVE_PREP_TEXT = ', 'let ownerMovePrepAt = 0;');
   assert.match(prep, /大约 3 分钟后/);
@@ -218,8 +218,8 @@ const sleepSeg = seg(bridgeSrc, "url.pathname === '/api/socialV2/sleep') {", "ur
   // 桥接：白天闸没了；enterSleep 用 resolveSleepUntil；主人私聊仍叫醒；非主人消息仍丢
   assert.doesNotMatch(sleepSeg, /白天（8:00–22:00）只有主人让你睡才能睡/);
   assert.doesNotMatch(sleepSeg, /睡\|晚安\|休息\|困了\|早点歇\|别熬/);
-  assert.match(sleepSeg, /enterSleep\(body\.reason, \{ hours: body\.hours, until: body\.until \}\)/);
-  assert.match(bridgeSrc, /function enterSleep\(reason, \{ hours, until \} = \{\}\) \{\n\s+const r = resolveSleepUntil\(\{ until, hours, nowMs: Date\.now\(\), realNowMs: realNow\(\)\.getTime\(\) \}\);/);
+  assert.match(sleepSeg, /enterSleep\(body\.reason, \{ hours: body\.hours, until: body\.until, natural: body\.natural === true \}\)/);
+  assert.match(bridgeSrc, /function enterSleep\(reason, \{ hours, until, natural \} = \{\}\) \{[\s\S]{0,900}?resolveSleepUntil\(\{ until, hours, nowMs: Date\.now\(\), realNowMs: realNow\(\)\.getTime\(\) \}\);/);
   assert.doesNotMatch(bridgeSrc, /const capHours = isNight \? 12 : 2;/);
   assert.match(bridgeSrc, /exitSleep\('主人私聊来找她'\)/);
   // 2026-10-24 生活不停：别人的消息照旧不叫醒她，但记进 asleepLog（见 test-asleep-log.mjs）
@@ -273,7 +273,7 @@ const sleepSeg = seg(bridgeSrc, "url.pathname === '/api/socialV2/sleep') {", "ur
   assert.match(cand, /cfg\.allow\?\.groups/);
   assert.match(bridgeSrc, /'douyinDm', 'selfCheck', 'selfHandoff', 'wokeUp'\]\);/);
   // 到点自己醒（10-24）：每分钟检查 sleepState.until，到了就起床并用 wokeUp 叫醒主人私聊那边的她
-  assert.match(bridgeSrc, /function maybeSleepEndV2\(\) \{\s*if \(!sleepState\.sleeping \|\| !sleepState\.until \|\| Date\.now\(\) < sleepState\.until\) return;\s*exitSleep\([^)]*\);[\s\S]{0,200}sendWakePromptV2\(key, 'wokeUp'\)/);
+  assert.match(bridgeSrc, /function maybeSleepEndV2\(\) \{\s*if \(!sleepState\.sleeping \|\| !sleepState\.until\) return;[\s\S]{0,900}?if \(Date\.now\(\) < sleepState\.until\) \{[\s\S]{0,700}?exitSleep\([^)]*\);[\s\S]{0,200}sendWakePromptV2\(key, 'wokeUp'\)/);
   assert.match(bridgeSrc, /setInterval\(\(\) => \{\s*try \{ maybeSleepEndV2\(\); \}/);
   assert.match(wakeSeg, /if \(reason === 'wokeUp'\) \{/);
   assert.match(wakeSeg, /if \(reason === 'selfHandoff'\) \{/);

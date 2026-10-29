@@ -90,7 +90,7 @@ if ($pcWatch) {
   if ($pcWatch2) { Write-Host '[完成] 采集器已启动' } else { Write-Host '[提示] 采集器没起来，检查 pc-watch.ps1' }
 }
 
-# ── 2.6 记忆服务（她的长期记忆索引，常驻） ───────────────────────────────
+# ── 2.6 记忆服务（两个人的脑子的索引，常驻；2026-10-29 搬到 brain/service.py，一个服务多个 brain） ───────────────────────────────
 # 模型只加载一次，本子改了自动重建向量索引。没起来时 memory_recall 会退回
 # 旧的 spawn 方式（能查，但每次要等几十秒）。
 if (Test-Port 3210) {
@@ -99,7 +99,7 @@ if (Test-Port 3210) {
   Write-Host '[启动] 记忆服务 ...'
   Start-Process -FilePath 'wscript.exe' -ArgumentList '"E:\qq-bridge\start-memory-hidden.vbs"' -WindowStyle Hidden
   if (Wait-Port 3210 40) { Write-Host '[完成] 记忆服务已就绪' }
-  else { Write-Host '[提示] 记忆服务还在加载模型，稍等（看 memory\service.log）' }
+  else { Write-Host '[提示] 记忆服务还在加载模型，稍等（看 brain\service.log）' }
 }
 
 # ── 2.65 她们的嗓子（肥鱼 CosyVoice3）：不在开机时启动 ────────────────────

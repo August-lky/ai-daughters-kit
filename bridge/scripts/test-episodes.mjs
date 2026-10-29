@@ -14,7 +14,7 @@ function ok(name) { passed += 1; console.log(`✅ ${name}`); }
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'episodes-test-'));
 const OWNER = 'private:1000000001';
 const GROUP = 'group:20002';
-const FRIEND = 'douyin:friend:群友X';
+const FRIEND = 'douyin:friend:群友192';
 const SKEW = 3 * 3600e3;
 const NOW = Date.now();
 const mk = (over) => ({ at: NOW - 60e3, key: OWNER, sid: 's', who: '主人', them: ['主人：你今天开心吗'], me: ['开心呀'], inner: '他在关心我', mood: { v: 74, top: '甜蜜' }, call: '', felt: '', tags: [], source: 'extract', ...over });
@@ -75,27 +75,32 @@ const store = createEpisodeStore({ dir: path.join(tmp, 'episodes'), skewMs: SKEW
   ok('每个 key ≤300 条，先丢最旧、没感受的抽取记录');
 }
 
-// 6. 作用域：群看不到主人私聊；主人私聊看得到抖音朋友；抖音朋友只看自己
+// 6. 统一记忆（2026-10-29 老大：每人只有一个脑子，不按会话隔离）：哪个出处都看得到所有出处的瞬间
 {
   store.append(mk({ key: GROUP, who: '群友', them: ['群友A：群里说的秘密话'], me: ['嘘'], at: NOW - 30e3 }));
-  store.append(mk({ key: FRIEND, who: '群友X', them: ['群友X：抖音上私下说的'], me: ['我知道了'], at: NOW - 20e3 }));
+  store.append(mk({ key: FRIEND, who: '群友192', them: ['群友192：抖音上私下说的'], me: ['我知道了'], at: NOW - 20e3 }));
   const g = store.search(GROUP, { query: '开心' });
-  assert.equal(g.length, 0, '群不能搜到主人私聊的瞬间');
-  assert.ok(store.search(GROUP, {}).every((e) => e.key === GROUP));
+  assert.ok(g.length >= 1 && g.every((e) => e.key === OWNER), '群里也搜得到主人私聊的瞬间');
+  assert.ok(store.search(GROUP, {}).some((e) => e.key === GROUP) && store.search(GROUP, {}).some((e) => e.key !== GROUP), '自己的和别处的都在');
   const o = store.search(OWNER, { query: '抖音' });
   assert.equal(o.length, 1);
   assert.equal(o[0].key, FRIEND);
-  assert.ok(store.search(OWNER, { query: '秘密' }).length === 0, '主人私聊也看不到群里的');
+  assert.ok(store.search(OWNER, { query: '秘密' }).length === 1, '主人私聊也搜得到群里的');
   const f = store.search(FRIEND, {});
-  assert.ok(f.length === 1 && f[0].key === FRIEND, '抖音朋友只看自己的');
-  assert.equal(store.search(FRIEND, { query: '开心' }).length, 0);
-  ok('按 key 隔离；主人私聊顺带看抖音；抖音朋友隔离');
+  assert.ok(f.length >= 3 && f.some((e) => e.key === FRIEND) && f.some((e) => e.key === OWNER), '抖音朋友这边也看得到所有出处的');
+  assert.ok(store.search(FRIEND, { query: '开心' }).length >= 1);
+  // 别处的私聊 / 抖音私信里的，想起来时标「私聊里的」；自己这儿的和群里的不标
+  const fromGroup = store.recall(GROUP, { query: '开心', limit: 3 }).text;
+  assert.ok(fromGroup.includes('，私聊里的'), fromGroup);
+  assert.ok(!store.recall(OWNER, { query: '开心', limit: 3 }).text.includes('私聊里的'), '主人私聊里翻自己的，不标');
+  assert.ok(!store.recall(OWNER, { query: '秘密', limit: 3 }).text.includes('私聊里的'), '群里的瞬间不算私聊');
+  ok('记忆统一：所有出处都看得到；别处的私聊 / 抖音私信想起来标「私聊里的」');
 }
 
 // 7. recall 格式与长度
 {
   const r = store.recall(OWNER, { query: '抖音', limit: 3 });
-  assert.ok(/^【\d\d\/\d\d \d\d:\d\d 抖音私信（和「群友X」）(，心情 \d+（[^）]*）)? · 编号 [a-f0-9]{10}】\n群友X：抖音上私下说的\n你：我知道了\n当时心里：他在关心我\n你后来写下的感觉：（当时没留感受）$/.test(r.text), r.text);
+  assert.ok(/^【\d\d\/\d\d \d\d:\d\d 抖音私信（和「群友192」），私聊里的(，心情 \d+（[^）]*）)? · 编号 [a-f0-9]{10}】\n群友192：抖音上私下说的\n你：我知道了\n当时心里：他在关心我\n你后来写下的感觉：（当时没留感受）$/.test(r.text), r.text);
   const all = store.recall(OWNER, { limit: 10 });
   assert.ok(all.text.length <= 1500, `len=${all.text.length}`);
   assert.ok(all.found >= 1 && all.ids.length === all.found);
@@ -190,10 +195,10 @@ const store = createEpisodeStore({ dir: path.join(tmp, 'episodes'), skewMs: SKEW
   const c7 = { id: 'call_7', name: 'mcp__snowluma__qq_send_message', args: { key: GROUP, token: TOKEN, messages: '这句没发出去' } };
   call(T + 30 * 60e3 + 10e3, c7);
   result(T + 30 * 60e3 + 11e3, 'call_7', 'Error: 发送失败', true);
-  // 回合 4：抖音朋友私信（路由到 douyin:friend:群友X），心情时间线 delta ≥3（②）
+  // 回合 4：抖音朋友私信（路由到 douyin:friend:群友192），心情时间线 delta ≥3（②）
   const d8 = { id: 'call_8', name: 'douyin_chat_read', args: { recipientId: 'conv:friend1' } };
   call(T + 50 * 60e3, d8);
-  result(T + 50 * 60e3, 'call_8', JSON.stringify({ conversation: { id: 'conv:friend1', displayName: '群友X' }, messages: [{ direction: 'incoming', text: '你声音好好听', id: 'msg:1', arrivalClassification: 'new' }, { direction: 'incoming', text: '旧的', id: 'msg:0', arrivalClassification: 'old-history' }] }));
+  result(T + 50 * 60e3, 'call_8', JSON.stringify({ conversation: { id: 'conv:friend1', displayName: '群友192' }, messages: [{ direction: 'incoming', text: '你声音好好听', id: 'msg:1', arrivalClassification: 'new' }, { direction: 'incoming', text: '旧的', id: 'msg:0', arrivalClassification: 'old-history' }] }));
   const d9 = { id: 'call_9', name: 'douyin_chat_send', args: { recipientId: 'conv:friend1', message: '谢谢你呀' } };
   assistant(T + 50 * 60e3 + 2e3, '被夸了有点高兴', [d9]);
   call(T + 50 * 60e3 + 2e3, d9);
@@ -207,7 +212,7 @@ const store = createEpisodeStore({ dir: path.join(tmp, 'episodes'), skewMs: SKEW
 
   const store2 = createEpisodeStore({ dir: path.join(tmp, 'episodes2'), skewMs: SKEW, ownerKey: OWNER, now: () => NOW });
   const indexFile = path.join(tmp, 'episodes2', 'extracted.json');
-  const env = { sessionsDir, ownerQQ: '1000000001', moodTimeline: [{ at: T + 50 * 60e3 + 1e3, mood: 78, delta: 4, dims: { happy: 9 } }], douyinAllowlist: [{ id: 'conv:owner', name: '主人号', role: 'owner' }, { id: 'conv:friend1', name: '群友X', role: 'friend' }], store: store2, indexFile };
+  const env = { sessionsDir, ownerQQ: '1000000001', moodTimeline: [{ at: T + 50 * 60e3 + 1e3, mood: 78, delta: 4, dims: { happy: 9 } }], douyinAllowlist: [{ id: 'conv:owner', name: '主人号', role: 'owner' }, { id: 'conv:friend1', name: '群友192', role: 'friend' }], store: store2, indexFile };
   const r = extractSessionEpisodes(sid, env);
   assert.equal(r.key, OWNER);
   const keys = r.episodes.map((e) => e.key);
@@ -221,7 +226,7 @@ const store = createEpisodeStore({ dir: path.join(tmp, 'episodes'), skewMs: SKEW
   assert.deepEqual(e2.them, ['便携鸭：小鲸鱼你会唱歌吗']);
   assert.deepEqual(e2.me, ['会一点点']);
   assert.ok(e2.tags.includes('记过'));
-  assert.deepEqual(e3.them, ['群友X：你声音好好听']);
+  assert.deepEqual(e3.them, ['群友192：你声音好好听']);
   assert.deepEqual(e3.me, ['谢谢你呀']);
   assert.equal(e3.mood.v, 78);
   assert.equal(e3.mood.d, 4);

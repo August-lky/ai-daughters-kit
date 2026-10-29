@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>她们俩</title>
+<!--
+  2026-10-29 老大：她们俩的页面（控制台施工单 A）。小鲸鱼和克劳德姐姐并排，看她们此刻在干什么、身体和心情、记忆和成长、
+  在外面玩的、运行情况，还能给她们留话、叫醒、让她睡、开关激素影子、切思考强度。
+  数据全部来自桥接的 /api/daughters/*、/api/live/*（路由在 src/daughters-console.js）；令牌取法同 console.html（?token= 进来存 localStorage，请求带 x-console-token）。
+  原生 JS + 内联 SVG，不依赖外网，不用构建工具。读不到的地方显示「暂时读不到」，不报错。所有数据都用 textContent 写进页面（不拼 HTML）。
+  这个页面只给老大看：页面、接口、文案里的东西不许出现在发给她们的提示里。
+-->
+<style>
+:root{
+  --bg:#f5f6f2; --card:#ffffff; --ink:#26312c; --muted:#6b776f; --line:#dde2da; --accent:#2a9d8f; --accent2:#c0562b;
+  --chip:#eef2ec; --ok:#2f9e5b; --bad:#c0392b; --warn:#b7791f; --think:#7b61c9; --shadow:0 1px 3px rgba(30,50,40,.08);
+  --add:#e3f4e6; --del:#fbe4e1; --fish:#2a7fb8; --sis:#b0643a;
+}
+:root[data-theme="dark"]{
+  --bg:#0f1514; --card:#162120; --ink:#dce6e0; --muted:#8a9a92; --line:#2b3935; --accent:#4cc3b3; --accent2:#ef8a5b;
+  --chip:#1d2927; --ok:#58c98a; --bad:#ef6f61; --warn:#e5b25d; --think:#a591e8; --shadow:none;
+  --add:#17341f; --del:#3d1d1a; --fish:#6fb6e8; --sis:#e0956a;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.55 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--accent)}
+.bar{position:sticky;top:0;z-index:20;background:var(--card);border-bottom:1px solid var(--line);padding:8px 14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.bar h1{font-size:17px;margin:0;letter-spacing:.1em}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:4px 14px;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.sp{flex:1}
+.ghost{background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 10px}
+.ghost:hover{border-color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--chip);border-radius:999px;padding:1px 10px;font-size:12.5px;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)} .dot.warn{background:var(--warn)}
+nav.jump{display:flex;flex-wrap:wrap;gap:4px 12px;padding:6px 14px;font-size:13px;background:var(--bg);border-bottom:1px solid var(--line)}
+nav.jump a{text-decoration:none;color:var(--muted)} nav.jump a:hover{color:var(--accent)}
+#banner{display:none;margin:10px 14px 0;padding:8px 12px;border:1px solid var(--bad);border-radius:8px;color:var(--bad);background:var(--card)}
+main{padding:12px 14px 60px;max-width:1700px;margin:0 auto}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;align-items:start}
+body.mode-fish .row,body.mode-sister .row{grid-template-columns:1fr;max-width:900px;margin-left:auto;margin-right:auto}
+body.mode-fish .cell[data-who="sister"],body.mode-sister .cell[data-who="fish"]{display:none}
+@media (max-width:1000px){.row{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);min-width:0}
+.chead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.chead h2{font-size:15px;margin:0}
+.chead .who-fish{color:var(--fish)} .chead .who-sister{color:var(--sis)}
+.chead .meta{margin-left:auto;font-size:12px;color:var(--muted)}
+.cbody{padding:10px 12px}
+.dim{color:var(--muted)}
+.small{font-size:12.5px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0 0 6px}
+.kv dt{color:var(--muted)} .kv dd{margin:0}
+.badge{display:inline-block;border-radius:6px;padding:0 8px;font-size:12.5px;background:var(--chip)}
+.badge.ok{background:var(--ok);color:#fff} .badge.sleep{background:#5b6fb7;color:#fff} .badge.bad{background:var(--bad);color:#fff} .badge.warn{background:var(--warn);color:#fff}
+.sub{font-weight:600;margin:12px 0 4px;font-size:13.5px}
+.sub:first-child{margin-top:0}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:3px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+pre.txt,.txt{white-space:pre-wrap;word-break:break-word;margin:0}
+.box{background:var(--chip);border-radius:8px;padding:6px 10px;margin:4px 0;max-height:300px;overflow:auto}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.tabs button{border:1px solid var(--line);background:transparent;border-radius:6px;padding:1px 9px;font-size:13px}
+.tabs button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.scroll{max-height:380px;overflow:auto}
+.bars{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:3px 12px}
+.bar1{display:flex;align-items:center;gap:6px;font-size:12.5px}
+.bar1 .nm{width:4.4em;color:var(--muted);flex:none}
+.bar1 .tr{flex:1;height:7px;background:var(--chip);border-radius:4px;overflow:hidden}
+.bar1 .fl{height:100%;background:var(--accent)}
+.bar1 .vl{width:3em;text-align:right;font-variant-numeric:tabular-nums}
+.felt{border-left:3px solid var(--accent);padding:2px 10px;margin:6px 0;color:var(--ink)}
+.big{font-size:30px;font-weight:600;line-height:1}
+.ctx{margin:4px 0}
+.ctx .tr{height:8px;background:var(--chip);border-radius:4px;overflow:hidden}
+.ctx .fl{height:100%;background:var(--accent)} .ctx .fl.hot{background:var(--warn)} .ctx .fl.hotter{background:var(--bad)}
+svg.chart{width:100%;height:auto;display:block}
+svg.chart text{fill:var(--muted);font-size:10px}
+.legend{display:flex;flex-wrap:wrap;gap:3px 8px;margin:4px 0}
+.legend button{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:transparent;border-radius:999px;padding:0 8px;font-size:12px}
+.legend button.off{opacity:.4}
+.legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.diff div{font-family:Consolas,monospace;font-size:12.5px;white-space:pre-wrap;word-break:break-word;padding:0 6px}
+.diff .a{background:var(--add)} .diff .d{background:var(--del)}
+/* 实时区 */
+.live{border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.livehead{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--line);font-size:12.5px}
+.livelist{height:360px;overflow:auto;padding:6px 8px;scroll-behavior:auto}
+.ent{margin:3px 0;font-size:13px;word-break:break-word}
+.ent .t{color:var(--muted);font-size:11.5px;margin-right:6px;font-variant-numeric:tabular-nums}
+.ent.div{color:var(--muted);font-size:12px;border-top:1px dashed var(--line);padding-top:3px;margin-top:8px}
+.ent.think{color:var(--think)} .ent.think .txt{display:block;font-style:italic;max-height:9.5em;overflow:auto;border-left:2px solid var(--think);padding-left:8px;margin:2px 0}
+.ent.thinking{color:var(--think)}
+.ent.thinking.open .thk::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--think);margin-left:6px;animation:pl 1s infinite}
+@keyframes pl{50%{opacity:.2}}
+.ent.text .txt{display:inline}
+.ent.tool{color:var(--ink)} .ent.tool .nm{font-family:Consolas,monospace;background:var(--chip);border-radius:4px;padding:0 5px}
+.ent.tool .args{color:var(--muted);font-family:Consolas,monospace;font-size:12px}
+.ent.tool .st{font-size:12px;margin-left:6px}
+.st.okc{color:var(--ok)} .st.badc{color:var(--bad)} .st.run{color:var(--warn)}
+.ent.sent{border-left:3px solid var(--ok);padding-left:8px;background:var(--card)}
+.ent.unsaid{border-left:3px solid var(--warn);padding-left:8px;background:var(--card)}
+.ent.note{color:var(--warn)}
+.ent.err{color:var(--bad);font-size:12px;padding-left:1.5em}
+.pins{display:grid;gap:4px;margin:6px 0}
+.pin{border-left:3px solid var(--line);padding:1px 8px;font-size:13px}
+.pin.s{border-color:var(--ok)} .pin.u{border-color:var(--warn)}
+/* 操作 */
+.acts{display:grid;gap:10px}
+.acts fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:8px 10px}
+.acts legend{padding:0 6px;color:var(--muted);font-size:12.5px}
+.acts textarea{width:100%;min-height:58px;resize:vertical;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:4px 6px}
+.acts select{border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:2px 6px}
+.acts .line{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-top:6px}
+.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:3px 14px}
+.btn.alt{background:transparent;color:var(--accent)}
+.btn.danger{border-color:var(--accent2);background:transparent;color:var(--accent2)}
+.btn:disabled{opacity:.45;cursor:default}
+.res{font-size:12.5px;margin-top:4px;min-height:1.2em}
+.res.ok{color:var(--ok)} .res.bad{color:var(--bad)}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);max-width:420px;padding:16px 18px}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+dialog .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+</style>
+</head>
+<body class="mode-both">
+<div class="bar">
+  <h1>她们俩</h1>
+  <div class="seg" id="modeSeg" role="group" aria-label="看谁">
+    <button data-m="fish">小鲸鱼</button><button data-m="sister">姐姐</button><button data-m="both">并排</button>
+  </div>
+  <div class="chips" id="onlineChips"></div>
+  <span class="sp"></span>
+  <a class="ghost" id="brainLink" href="/brain.html">大脑</a>
+  <button class="ghost" id="themeBtn" type="button">深浅色</button>
+  <span class="dim small" id="clockNote"></span>
+</div>
+<nav class="jump" id="jump">
+  <a href="#row-now">此刻</a><a href="#row-body">身体和心情</a><a href="#row-memory">记忆和成长</a><a href="#row-outside">在外面玩</a><a href="#row-ops">运行情况</a><a href="#row-act">能做的操作</a><a href="#row-mail">妈妈信箱</a>
+</nav>
+<div id="banner"></div>
+<main id="main"></main>
+<dialog id="dlg"><div id="dlgText" class="txt"></div><div class="btns"><button class="btn alt" id="dlgNo" type="button">取消</button><button class="btn" id="dlgYes" type="button">确定</button></div></dialog>
+
+<script>
+'use strict';
+// ───────────────────────── 小工具 ─────────────────────────
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch { /* 读不到存储也能用 */ } },
+  del(k){ try { localStorage.removeItem(k); } catch { /* 同上 */ } }
+};
+(function(){ // ?token= 进来存起来并从地址栏抹掉（同 console.html）
+  const qs = new URLSearchParams(location.search);
+  const t = qs.get('token');
+  if (t) { store.set('consoleToken', t); qs.delete('token'); history.replaceState({}, '', location.pathname + (qs.toString() ? '?' + qs : '') + location.hash); }
+})();
+const tokenHeaders = () => { const t = store.get('consoleToken'); return t ? {'x-console-token': t} : {}; };
+
+const h = (tag, a, ...kids) => {
+  const el = document.createElement(tag);
+  if (a) for (const [k, v] of Object.entries(a)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k === 'style') el.style.cssText = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat(3)) { if (kid == null || kid === false) continue; el.append(kid.nodeType ? kid : document.createTextNode(String(kid))); }
+  return el;
+};
+const NS = 'http://www.w3.org/2000/svg';
+const sv = (tag, a, ...kids) => {
+  const el = document.createElementNS(NS, tag);
+  if (a) for (const [k, v] of Object.entries(a)) if (v != null) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return el;
+};
+const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+const $ = (s, r = document) => r.querySelector(s);
+const WHO = ['fish', 'sister'];
+const NAME = {fish: '小鲸鱼', sister: '姐姐'};
+const ICON = {fish: '🐳', sister: '📖'};
+
+let SKEW = 0; // 本机时钟比真实时间快多少毫秒（meta 里给）
+const bjParts = (ms) => {
+  const d = new Date(ms - SKEW + 8 * 3600e3);
+  return {y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds()};
+};
+const p2 = (n) => String(n).padStart(2, '0');
+const fmtTime = (ms) => { if (!ms) return '—'; const p = bjParts(ms); return `${p2(p.h)}:${p2(p.mi)}`; };
+const fmtTimeS = (ms) => { if (!ms) return '—'; const p = bjParts(ms); return `${p2(p.h)}:${p2(p.mi)}:${p2(p.s)}`; };
+const fmtDT = (ms) => { if (!ms) return '—'; const p = bjParts(ms); const today = bjParts(Date.now()); return (p.d === today.d && p.mo === today.mo ? '' : `${p.mo}月${p.d}日 `) + `${p2(p.h)}:${p2(p.mi)}`; };
+const dur = (ms) => {
+  const m = Math.round(Math.abs(ms) / 60e3);
+  if (m < 1) return '不到 1 分钟';
+  if (m < 90) return `${m} 分钟`;
+  const hh = m / 60;
+  return hh < 48 ? `${hh.toFixed(1).replace(/\.0$/, '')} 小时` : `${Math.round(hh / 24)} 天`;
+};
+const ago = (ms) => (ms ? `${dur(Date.now() - ms)}前` : '—');
+const until = (ms) => (ms ? (ms > Date.now() ? `还有 ${dur(ms - Date.now())}` : '已经过了') : '');
+const num = (v, d = 2) => (Number.isFinite(+v) ? (+v).toFixed(d).replace(/\.?0+$/, '') : '—');
+const unavail = (r, fallback = '暂时读不到') => h('div', {class: 'dim', text: (r && r.reason) || fallback});
+
+// ───────────────────────── 请求 ─────────────────────────
+function banner(msg) { const b = $('#banner'); if (!msg) { b.style.display = 'none'; return; } b.style.display = 'block'; clear(b).append(msg + ' ', h('a', {href: '#', text: '重新填令牌', onclick: (e) => { e.preventDefault(); askToken(); }})); }
+function askToken() { const t = prompt('请输入访问令牌：'); if (t) { store.set('consoleToken', t.trim()); location.reload(); } }
+async function api(path, body) {
+  try {
+    const res = await fetch(path, body ? {method: 'POST', headers: {'content-type': 'application/json', ...tokenHeaders()}, body: JSON.stringify(body)} : {headers: tokenHeaders()});
+    if (res.status === 403 || res.status === 401) { banner('令牌没填或不对。'); return {ok: false, reason: '暂时读不到：令牌不对', status: res.status}; }
+    banner('');
+    const j = await res.json().catch(() => null);
+    return j || {ok: false, reason: `暂时读不到：回了 ${res.status}`};
+  } catch (e) { return {ok: false, reason: '暂时读不到：连不上桥接（它可能在重启）'}; }
+}
+
+// ───────────────────────── 卡片框架 ─────────────────────────
+function card(who, title) {
+  const meta = h('span', {class: 'meta'});
+  const body = h('div', {class: 'cbody'});
+  const el = h('section', {class: 'card'}, h('div', {class: 'chead'}, h('h2', {}, h('span', {class: 'who-' + who, text: `${ICON[who]} ${NAME[who]}`}), ` · ${title}`), meta), body);
+  return {el, body, setMeta(src, at) { meta.textContent = [src ? `来源：${src}` : '', at ? `更新于 ${fmtTime(at)}` : ''].filter(Boolean).join(' · '); }};
+}
+function mkRow(id, build) { // 一行两张卡（小鲸鱼 | 姐姐）
+  const row = h('div', {class: 'row', id});
+  const cards = {};
+  for (const who of WHO) { const c = build(who); cards[who] = c; row.append(h('div', {class: 'cell', 'data-who': who}, c.el)); }
+  return {row, cards};
+}
+
+// ───────────────────────── 图（内联 SVG） ─────────────────────────
+function lineChart({series, t0, t1, y0 = 0, y1 = 1, marks = [], bands = [], base = null, W = 640, H = 170, yFmt = (v) => num(v, 1)}) {
+  const L = 34, R = 8, T = 8, B = 20;
+  const x = (t) => L + (W - L - R) * Math.max(0, Math.min(1, (t - t0) / (t1 - t0 || 1)));
+  const y = (v) => T + (H - T - B) * (1 - Math.max(0, Math.min(1, (v - y0) / (y1 - y0 || 1))));
+  const s = sv('svg', {class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img'});
+  for (const b of bands) s.append(sv('rect', {x: x(b[0]), y: T, width: Math.max(1, x(b[1]) - x(b[0])), height: H - T - B, fill: 'currentColor', opacity: '.07'}));
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + (y1 - y0) * i / 4;
+    s.append(sv('line', {x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: 'currentColor', opacity: '.12'}), sv('text', {x: L - 4, y: y(v) + 3, 'text-anchor': 'end'}, yFmt(v)));
+  }
+  // x 轴：每 4 小时一个刻度（按北京时间整点）
+  const startBj = t0 - SKEW + 8 * 3600e3;
+  let tick = Math.ceil(startBj / (4 * 3600e3)) * 4 * 3600e3 - 8 * 3600e3 + SKEW;
+  for (; tick <= t1; tick += 4 * 3600e3) s.append(sv('line', {x1: x(tick), x2: x(tick), y1: T, y2: H - B, stroke: 'currentColor', opacity: '.1'}), sv('text', {x: x(tick), y: H - 6, 'text-anchor': 'middle'}, fmtTime(tick)));
+  if (base !== null) s.append(sv('line', {x1: L, x2: W - R, y1: y(base), y2: y(base), stroke: 'currentColor', opacity: '.35', 'stroke-dasharray': '4 3'}));
+  for (const m of marks) s.append(sv('line', {x1: x(m.t), x2: x(m.t), y1: T, y2: H - B, stroke: m.color || '#c0562b', 'stroke-width': 1.2, 'stroke-dasharray': '2 2', opacity: '.75'}, sv('title', {}, m.label || '')));
+  for (const se of series) {
+    const pts = se.points.filter((p) => p[1] != null && Number.isFinite(+p[1]));
+    if (pts.length === 0) continue;
+    const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join('');
+    s.append(sv('path', {d, fill: 'none', stroke: se.color, 'stroke-width': se.w || 1.6, 'stroke-linejoin': 'round'}, sv('title', {}, se.name || '')));
+    if (pts.length === 1) s.append(sv('circle', {cx: x(pts[0][0]), cy: y(pts[0][1]), r: 2.5, fill: se.color}));
+  }
+  return s;
+}
+const PALETTE = ['#2a9d8f', '#e07a3a', '#7b61c9', '#c0392b', '#3f7fbf', '#8a9a3c', '#d1578f', '#6b776f', '#b7791f', '#2f6f4f', '#a35d3c', '#4b4bb5', '#17a2b8', '#a0522d'];
+
+// ───────────────────────── 各块的画法 ─────────────────────────
+const DATA = {fish: {}, sister: {}}; // 最近一次拿到的数据
+let META = null;
+
+// 1. 此刻
+const LIVE = {fish: null, sister: null};
+function renderNow(who, c) {
+  const d = DATA[who].now;
+  const b = c.nowBody;
+  clear(b);
+  if (!d || d.ok === false) { b.append(unavail(d, d && d.reason)); return; }
+  const sleeping = d.awake === false;
+  const nextWake = d.nextOwnerWakeAt || d.nextHeartbeatAt || 0;
+  const kv = h('dl', {class: 'kv'});
+  kv.append(h('dt', {text: '状态'}), h('dd', {}, h('span', {class: 'badge ' + (sleeping ? 'sleep' : 'ok'), text: sleeping ? '睡着' : '醒着'}),
+    sleeping && d.sleep ? (d.sleep.natural ? ' 睡到自然醒（最长到 ' + fmtDT(d.sleep.until) + '）' + (d.sleep.reason ? ` · ${d.sleep.reason}` : '') : ` 睡到 ${fmtDT(d.sleep.until)}（${until(d.sleep.until)}）${d.sleep.reason ? ` · ${d.sleep.reason}` : ''}`) : '',
+    d.paused ? h('span', {class: 'badge warn', style: 'margin-left:6px', text: '桥接暂停中'}) : null,
+    d.live === false ? h('span', {class: 'badge warn', style: 'margin-left:6px', text: '她的进程没回应，下面是存档里的状态'}) : null));
+  kv.append(h('dt', {text: '下次自己醒'}), h('dd', {text: nextWake ? `${fmtDT(nextWake)}（${until(nextWake) || ago(nextWake)}）` : '暂时读不到（还没排上）'}));
+  const cur = d.current;
+  kv.append(h('dt', {text: '此刻在'}), h('dd', {}, cur ? [cur.label || cur.key || '—', cur.busy ? h('span', {class: 'badge warn', style: 'margin-left:6px', text: cur.busyReason || '这一轮还没说完'}) : h('span', {class: 'dim', text: '（闲着）'}), cur.since ? h('span', {class: 'dim', text: ` · 从 ${fmtTime(cur.since)} 起`}) : null] : h('span', {class: 'dim', text: '没有正在跑的会话'})));
+  if (d.resting) kv.append(h('dt', {text: '歇着'}), h('dd', {text: `她那边刚出过错，歇到 ${fmtTime(d.resting.until)}`}));
+  b.append(kv);
+  const q = d.queued || {};
+  const qs = [];
+  for (const n of q.wakeNotes || []) qs.push(`留话${n.label ? `（${n.label}）` : ''}：${n.text}`);
+  for (const w of q.pendingWakes || []) qs.push(`排队的唤醒（${w.label || w.key}）：${(w.reasons || []).join('、') || '等着'}`);
+  if (q.held) qs.push(`压着没发的（${q.held.to}）：${q.held.lines.join(' / ')}`);
+  if (q.note) qs.push(`存档里的妈妈留言：${q.note}`);
+  b.append(h('div', {class: 'sub', text: '排队中的'}), qs.length ? h('div', {class: 'box small'}, qs.map((t) => h('div', {text: t}))) : h('div', {class: 'dim small', text: '没有排队的留话和唤醒'}));
+  if (Array.isArray(d.sessions) && d.sessions.length) {
+    b.append(h('div', {class: 'sub', text: '各会话'}));
+    const tb = h('table', {}, h('tr', {}, ['会话', '状态', '最近回复', '未读', '下次自己醒'].map((t) => h('th', {text: t}))));
+    for (const s of d.sessions.slice(0, 8)) tb.append(h('tr', {}, h('td', {text: s.label || s.key}), h('td', {text: s.busy ? (s.busyReason || '忙') : '闲'}), h('td', {text: s.lastAiReplyAt ? ago(s.lastAiReplyAt) : '—'}), h('td', {text: String(s.unread || 0)}), h('td', {text: s.proactiveDueAt ? fmtTime(s.proactiveDueAt) : '—'})));
+    b.append(tb);
+  }
+}
+function buildLive(who) {
+  const state = h('span', {class: 'dim', text: '连接中…'});
+  const follow = h('input', {type: 'checkbox', checked: true});
+  const list = h('div', {class: 'livelist'});
+  const pins = h('div', {class: 'pins'});
+  const L = {who, entries: [], nodes: new Map(), dirty: new Set(), list, state, follow, pins, stop: false};
+  list.addEventListener('scroll', () => { const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 30; if (!atEnd && follow.checked) follow.checked = false; else if (atEnd && !follow.checked) follow.checked = true; });
+  const head = h('div', {class: 'livehead'}, h('b', {text: who === 'sister' ? '说出口的话 · 工具 · 正在想' : '思考 · 文字 · 工具'}), state, h('span', {class: 'sp'}), h('label', {class: 'small'}, follow, ' 跟着滚'), h('button', {class: 'ghost small', type: 'button', text: '清空显示', onclick: () => { L.entries = []; L.nodes.clear(); clear(list); renderPins(L); }}));
+  LIVE[who] = L;
+  return h('div', {}, h('div', {class: 'sub', text: '实时'}), pins, h('div', {class: 'live'}, head, list), who === 'sister' ? h('div', {class: 'dim small', style: 'margin-top:4px', text: '姐姐这一栏只显示她说出口的话、调了什么工具和成败、「正在想」多久；她的思考内容不采集。'}) : h('div', {class: 'dim small', style: 'margin-top:4px', text: '思考是 DeepSeek 公开返回的推理；只放内存里，桥接一重启就清空，不落盘。'}));
+}
+function entryEl(e) {
+  const t = h('span', {class: 't', text: fmtTimeS(e.t)});
+  switch (e.kind) {
+    case 'turn-start': return h('div', {class: 'ent div'}, t, '开始一轮', e.label ? ` · ${e.label}` : '');
+    case 'turn-end': return h('div', {class: 'ent div'}, t, `这一轮结束${e.text ? `（${e.text}）` : ''}`);
+    case 'think': return h('div', {class: 'ent think'}, t, h('b', {text: '思考'}), e.open ? h('span', {class: 'dim small', text: ' …还在想'}) : null, h('span', {class: 'txt', text: e.text || ''}));
+    case 'thinking': {
+      const el = h('div', {class: 'ent thinking' + (e.open ? ' open' : ''), 'data-t': e.t}, t, h('span', {class: 'thk', text: e.open ? `正在想…（已 ${Math.max(0, Math.round((Date.now() - e.t) / 1000))} 秒）` : `想了 ${e.secs ?? 0} 秒`}));
+      return el;
+    }
+    case 'text': return h('div', {class: 'ent text'}, t, h('b', {text: '写下 '}), h('span', {class: 'txt', text: e.text || ''}));
+    case 'tool-call': return h('div', {class: 'ent tool'}, t, h('span', {class: 'nm', text: e.name || e.fullName || '工具'}), e.send ? h('span', {class: 'dim small', text: ' 发送'}) : null, ' ', h('span', {class: 'args', text: e.args || ''}),
+      e.done ? h('span', {class: 'st ' + (e.ok ? 'okc' : 'badc'), text: e.ok ? '成功' : '失败'}) : h('span', {class: 'st run', text: '进行中…'}));
+    case 'tool-result': return e.ok ? null : h('div', {class: 'ent err'}, t, `${e.name || '工具'} 失败${e.text ? `：${e.text}` : ''}`);
+    case 'sent': return h('div', {class: 'ent sent'}, t, h('b', {text: '发出 '}), e.to ? h('span', {class: 'dim small', text: `→ ${e.to} `}) : null, h('span', {class: 'txt', text: e.text || ''}));
+    case 'unsaid': return h('div', {class: 'ent unsaid'}, t, h('b', {text: '没说出口 '}), h('span', {class: 'txt', text: e.text || ''}));
+    default: return h('div', {class: 'ent note'}, t, e.text || e.kind);
+  }
+}
+function renderPins(L) {
+  clear(L.pins);
+  const last = (k) => { for (let i = L.entries.length - 1; i >= 0; i--) if (L.entries[i].kind === k) return L.entries[i]; return null; };
+  const s = last('sent'), u = last('unsaid');
+  L.pins.append(s ? h('div', {class: 'pin s'}, h('span', {class: 'dim small', text: `刚发出 ${fmtTimeS(s.t)}${s.to ? ` → ${s.to}` : s.label ? ` · ${s.label}` : ''}：`}), s.text) : h('div', {class: 'pin s dim small', text: '刚发出的消息：这次连上以后还没有'}),
+    u ? h('div', {class: 'pin u'}, h('span', {class: 'dim small', text: `没说出口 ${fmtTimeS(u.t)}：`}), u.text) : h('div', {class: 'pin u dim small', text: '没说出口的：这次连上以后还没有'}));
+}
+function placeEntry(L, e) {
+  const el = entryEl(e);
+  const old = L.nodes.get(e.id);
+  if (old) { if (el) old.replaceWith(el); else old.remove(); } else if (el) L.list.append(el);
+  if (el) L.nodes.set(e.id, el); else L.nodes.delete(e.id);
+}
+let rafPending = false;
+function flushLive() {
+  rafPending = false;
+  for (const who of WHO) {
+    const L = LIVE[who]; if (!L) continue;
+    for (const id of L.dirty) { const e = L.entries.find((x) => x.id === id); if (e) placeEntry(L, e); }
+    L.dirty.clear();
+    while (L.entries.length > 400) { const o = L.entries.shift(); L.nodes.get(o.id)?.remove(); L.nodes.delete(o.id); }
+    if (L.follow.checked) L.list.scrollTop = L.list.scrollHeight;
+  }
+}
+const scheduleFlush = () => { if (!rafPending) { rafPending = true; requestAnimationFrame(flushLive); } };
+function liveEvent(who, ev, data) {
+  const L = LIVE[who];
+  if (ev === 'snapshot') { L.entries = (data.entries || []).slice(-400); L.nodes.clear(); clear(L.list); for (const e of L.entries) placeEntry(L, e); renderPins(L); if (L.follow.checked) L.list.scrollTop = L.list.scrollHeight; return; }
+  if (ev === 'add') { L.entries.push(data); L.dirty.add(data.id); if (data.kind === 'sent' || data.kind === 'unsaid') renderPins(L); scheduleFlush(); return; }
+  const e = L.entries.find((x) => x.id === data.id);
+  if (!e) return;
+  if (ev === 'delta') { e.text = data.full !== undefined ? data.full : (e.text || '') + data.text; L.dirty.add(e.id); scheduleFlush(); }
+  else if (ev === 'update') { Object.assign(e, data); L.dirty.add(e.id); scheduleFlush(); }
+}
+async function connectLive(who) { // 用 fetch 读 SSE：令牌放请求头，不放地址栏
+  const L = LIVE[who];
+  while (!L.stop) {
+    let wait = 3000;
+    try {
+      L.state.textContent = '连接中…';
+      const res = await fetch(`/api/live/${who}`, {headers: tokenHeaders()});
+      if (!res.ok || !res.body) { L.state.textContent = res.status === 403 ? '令牌不对' : `连不上（${res.status}）`; wait = 8000; }
+      else {
+        L.state.textContent = '已连上';
+        const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+        for (;;) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, {stream: true});
+          let i;
+          while ((i = buf.indexOf('\n\n')) >= 0) {
+            const block = buf.slice(0, i); buf = buf.slice(i + 2);
+            let ev = 'message'; let data = '';
+            for (const line of block.split('\n')) { if (line.startsWith('event:')) ev = line.slice(6).trim(); else if (line.startsWith('data:')) data += line.slice(5).trim(); }
+            if (!data) continue;
+            let obj; try { obj = JSON.parse(data); } catch { continue; }
+            if (ev === 'offline') { L.state.textContent = obj.reason || '她的进程没有回应'; wait = 8000; } else liveEvent(who, ev, obj);
+          }
+        }
+        if (L.state.textContent === '已连上') L.state.textContent = '断开了，重连中…';
+      }
+    } catch { L.state.textContent = '断开了，重连中…'; }
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+setInterval(() => { // 「正在想（已 N 秒）」每秒走字
+  for (const el of document.querySelectorAll('.ent.thinking.open')) { const t = +el.getAttribute('data-t'); const s = $('.thk', el); if (s) s.textContent = `正在想…（已 ${Math.max(0, Math.round((Date.now() - t) / 1000))} 秒）`; }
+}, 1000);
+
+// 2. 身体和心情
+function barRow(name, v, max, fmt) { return h('div', {class: 'bar1'}, h('span', {class: 'nm', text: name}), h('span', {class: 'tr'}, h('span', {class: 'fl', style: `display:block;width:${Math.max(0, Math.min(1, v / max)) * 100}%`})), h('span', {class: 'vl', text: fmt ? fmt(v) : num(v)})); }
+const HIDE_HORMONE = {fish: new Set(), sister: new Set()};
+const DEFAULT_ON = ['sleepy', 'longingOwner', 'longingSister', 'stress', 'security', 'boredom', 'curiosity'];
+function renderBody(who, c) {
+  const d = DATA[who].body;
+  const b = clear(c.body);
+  if (!d) { b.append(unavail(null)); return; }
+  const m = d.mood || {};
+  b.append(h('div', {class: 'sub', text: '心情'}));
+  if (!m.ok) b.append(unavail(m));
+  else {
+    b.append(h('div', {style: 'display:flex;gap:16px;align-items:center;flex-wrap:wrap'}, h('div', {}, h('div', {class: 'big', text: String(m.score)}), h('div', {class: 'dim small', text: `${m.word}（平常 ${m.base}）`})),
+      h('div', {class: 'bars', style: 'flex:1;min-width:220px'}, (m.dims || []).map((x) => barRow(x.name, x.value, 10)))));
+    if (m.reason) b.append(h('div', {class: 'felt', text: m.reason}));
+    const now = Date.now(); const pts = (m.curve || []).map((p) => [p.at, p.mood]);
+    if (pts.length >= 2) b.append(lineChart({series: [{name: '心情', color: 'var(--accent)', points: pts}], t0: Math.max(now - 24 * 3600e3, pts[0][0] - 600e3), t1: now, y0: 0, y1: 100, base: m.base, yFmt: (v) => String(Math.round(v)), H: 140}));
+    if ((m.recent || []).length) b.append(h('details', {}, h('summary', {class: 'small dim', text: `最近 ${m.recent.length} 次变化`}), h('div', {class: 'box small'}, m.recent.map((r) => h('div', {}, `${fmtDT(r.at)}  ${r.mood}（${r.delta > 0 ? '+' : ''}${r.delta}）${r.reason ? `  ${r.reason}` : ''}`)))));
+    c.mood.setMeta(m.source, m.updatedAt);
+  }
+  const hm = d.hormones || {};
+  b.append(h('div', {class: 'sub', text: '激素（只记录，不影响她做事）'}));
+  if (!hm.ok) { b.append(unavail(hm)); return; }
+  b.append(h('div', {class: 'small'}, h('span', {class: 'badge ' + (hm.enabled ? 'ok' : 'warn'), text: hm.enabled ? '影子记录开着' : '影子记录关着'}), hm.asleep ? ' · 现在在睡' : ''));
+  if (hm.felt) b.append(h('div', {class: 'felt', text: `她现在的感受句：${hm.felt}`}));
+  b.append(h('div', {class: 'bars'}, (hm.keys || []).map((k) => barRow(k.name, hm.now[k.key] ?? 0, 1, (v) => num(v, 2)))));
+  const now = Date.now(); const hid = HIDE_HORMONE[who];
+  const keys = hm.keys || [];
+  if (!c.hormInit) { c.hormInit = true; for (const k of keys) if (!DEFAULT_ON.includes(k.key)) hid.add(k.key); }
+  const legend = h('div', {class: 'legend'});
+  const chartBox = h('div', {});
+  const drawChart = () => {
+    clear(chartBox);
+    const series = keys.map((k, i) => ({key: k.key, name: k.name, color: PALETTE[i % PALETTE.length], points: (hm.points || []).map((p) => [p.t, p.lv[k.key]])})).filter((s) => !hid.has(s.key));
+    const bands = []; let from = null;
+    for (const p of hm.points || []) { if (p.asleep && from === null) from = p.t; if (!p.asleep && from !== null) { bands.push([from, p.t]); from = null; } }
+    if (from !== null) bands.push([from, now]);
+    const first = (hm.points && hm.points.length) ? hm.points[0].t : now - 24 * 3600e3;
+    chartBox.append(lineChart({series, t0: Math.max(now - 24 * 3600e3, first - 600e3), t1: now, marks: (hm.would || []).map((w) => ({t: w.t, label: `${fmtTime(w.t)} 本来会：${w.what.join('、')}`})), bands, H: 190}));
+  };
+  keys.forEach((k, i) => legend.append(h('button', {type: 'button', class: hid.has(k.key) ? 'off' : '', onclick: (ev) => { if (hid.has(k.key)) hid.delete(k.key); else hid.add(k.key); ev.currentTarget.classList.toggle('off'); drawChart(); }}, h('i', {style: `background:${PALETTE[i % PALETTE.length]}`}), k.name)));
+  b.append(legend, chartBox);
+  drawChart();
+  b.append(h('div', {class: 'dim small', text: '灰底是睡着的时段；橙色虚线是「本来会触发」的时刻（鼠标放上去看是什么）。'}));
+  if ((hm.would || []).length) b.append(h('details', {}, h('summary', {class: 'small dim', text: `「本来会」的时刻 ${hm.would.length} 次`}), h('div', {class: 'box small'}, hm.would.slice().reverse().map((w) => h('div', {}, `${fmtDT(w.t)}  本来会：${w.what.join('、')}${w.felt ? `  （${w.felt}）` : ''}`)))));
+  if (hm.summary) b.append(h('details', {}, h('summary', {class: 'small dim', text: '今天的小结'}), h('pre', {class: 'box small txt', text: hm.summary})));
+  c.horm.setMeta(hm.source, hm.updatedAt);
+}
+
+// 3. 记忆和成长
+const MEM_TAB = {fish: 'recall', sister: 'recall'};
+const MEM_TABS = [['recall', '最近想起'], ['moments', '瞬间'], ['sticky', '便签'], ['self', 'self'], ['rambling', '碎碎念'], ['diary', '日记'], ['growth', '成长札记'], ['impressions', '印象'], ['handoff', '交接'], ['novels', '《半只耳朵》']];
+function textBox(r, empty) { if (!r || !r.ok) return unavail(r, empty); return h('div', {}, h('div', {class: 'dim small', text: `${r.name ? r.name + ' · ' : ''}最后改动 ${fmtDT(r.mtime)}`}), h('pre', {class: 'box txt', text: r.text})); }
+function renderMemory(who, c) {
+  const d = DATA[who].memory;
+  const b = clear(c.body);
+  if (!d || d.ok === false) { b.append(unavail(d)); return; }
+  const tabs = h('div', {class: 'tabs'});
+  const area = h('div', {});
+  const draw = () => {
+    clear(area);
+    const tab = MEM_TAB[who];
+    for (const x of tabs.children) x.setAttribute('aria-pressed', String(x.dataset.k === tab));
+    if (tab === 'recall') {
+      area.append(h('div', {class: 'dim small', text: '「可能想起的」：她那一轮被提醒的几条（来自检索服务的记录）'}));
+      area.append(!d.recall.length ? h('div', {class: 'dim', text: '还没有记录'}) : h('div', {class: 'scroll'}, d.recall.map((r) => h('div', {class: 'box small'}, h('div', {}, h('b', {text: fmtDT(r.at)}), `  ${r.mode === 'group' ? '群里' : '私聊'} · 用这句找：`, r.q), r.picks.map((p) => h('div', {class: 'dim'}, `· ${p.label}（${num(p.score, 2)}）${p.preview}`))))));
+    } else if (tab === 'moments') {
+      area.append(!d.moments.length ? h('div', {class: 'dim', text: '还没有瞬间'}) : h('div', {class: 'scroll'}, d.moments.map((m) => h('div', {class: 'box small'}, h('div', {}, h('b', {text: fmtDT(m.at)}), `  ${m.who || ''}${m.tags && m.tags.length ? '  #' + m.tags.join(' #') : ''}${m.source ? `  [${m.source}]` : ''}`), m.them ? h('div', {class: 'dim', text: `对方：${m.them}`}) : null, m.me ? h('div', {class: 'dim', text: `我：${m.me}`}) : null, m.inner ? h('div', {text: `心里：${m.inner}`}) : null, m.felt ? h('div', {text: `感受：${m.felt}`}) : null))));
+    } else if (tab === 'sticky') area.append(textBox(d.sticky));
+    else if (tab === 'self') {
+      const s = d.self;
+      if (!s.ok) { area.append(unavail(s)); return; }
+      let mode = 'text';
+      const inner = h('div', {});
+      const drawSelf = () => {
+        clear(inner);
+        if (mode === 'diff') inner.append(!s.hasBackup ? h('div', {class: 'dim', text: '没有找到上一版备份，没法做对比'}) : h('div', {class: 'box diff'}, s.diff.length ? s.diff.map((x) => h('div', {class: x.t === '+' ? 'a' : x.t === '-' ? 'd' : '', text: `${x.t === ' ' ? '  ' : x.t + ' '}${x.s ?? x.text ?? ''}`})) : h('div', {class: 'dim', text: '和上一版一样'})));
+        else inner.append(h('pre', {class: 'box txt', style: 'max-height:340px', text: s.text}));
+      };
+      area.append(h('div', {class: 'small'}, h('span', {class: 'dim', text: `${s.source} · 最后改动 ${fmtDT(s.mtime)}${s.hasBackup ? ` · 上一版 ${fmtDT(s.prevMtime)}` : ' · 没有备份'}`}), '  ', h('button', {class: 'ghost small', type: 'button', text: '全文', onclick: () => { mode = 'text'; drawSelf(); }}), ' ', h('button', {class: 'ghost small', type: 'button', text: '和上一版对比', onclick: () => { mode = 'diff'; drawSelf(); }})), inner);
+      drawSelf();
+    } else if (tab === 'rambling') area.append(textBox(d.rambling));
+    else if (tab === 'diary') area.append(textBox(d.diary));
+    else if (tab === 'growth') area.append(!d.growth.ok ? unavail(d.growth) : h('div', {}, h('div', {class: 'dim small', text: `最后改动 ${fmtDT(d.growth.mtime)}`}), h('div', {class: 'box small'}, d.growth.lines.map((l) => h('div', {text: l})))));
+    else if (tab === 'impressions') area.append(!d.impressions.ok ? unavail(d.impressions) : h('div', {}, h('div', {class: 'dim small', text: `共 ${d.impressions.count} 个人（号码只显示末四位）`}), h('table', {}, h('tr', {}, ['谁', '分', '最近一笔', '改于'].map((t) => h('th', {text: t}))), d.impressions.list.map((p) => h('tr', {}, h('td', {text: p.name || p.uid}), h('td', {text: String(p.score)}), h('td', {text: p.note}), h('td', {text: fmtDT(p.updatedAt)}))))));
+    else if (tab === 'handoff') area.append(textBox(d.handoff));
+    else if (tab === 'novels') area.append(!d.novels.ok ? unavail(d.novels) : (!d.novels.books.length ? h('div', {class: 'dim', text: '还没有合写的书'}) : h('div', {}, d.novels.books.map((bk) => h('div', {class: 'box small'}, h('div', {}, h('b', {text: bk.book}), bk.error ? `（${bk.error}）` : `  写到第 ${bk.sections} 节，共 ${bk.entries} 条，最后改动 ${fmtDT(bk.mtime)}`), (bk.last || []).map((e) => h('div', {class: 'dim'}, `${e.author || ''} ${e.time || ''}：${e.text}`)))))));
+  };
+  for (const [k, name] of MEM_TABS) tabs.append(h('button', {type: 'button', 'data-k': k, text: name, onclick: () => { MEM_TAB[who] = k; draw(); }}));
+  b.append(tabs, area);
+  draw();
+}
+
+// 4. 在外面玩
+function listBox(rows, fmt, empty = '还没有') { return !rows || !rows.length ? h('div', {class: 'dim small', text: empty}) : h('div', {class: 'box small'}, rows.map((r) => h('div', {}, fmt(r)))); }
+function renderOutside(who, c) {
+  const d = DATA[who].outside;
+  const b = clear(c.body);
+  if (!d || d.ok === false) { b.append(unavail(d)); return; }
+  b.append(h('div', {class: 'sub', text: '抖音'}));
+  const dy = d.douyin;
+  if (!dy || !dy.ok) b.append(h('div', {class: 'dim small', text: dy && dy.reason ? dy.reason : '暂时读不到'}));
+  else {
+    b.append(h('div', {class: 'small'}, h('span', {class: 'badge ' + (dy.running ? 'ok' : ''), text: dy.running ? '正在刷' : '没在刷'}), ` 状态：${dy.status || '—'}`, dy.lastError ? `  · 上次出错：${dy.lastError}` : '', h('span', {class: 'dim', text: `  · 状态文件 ${ago(dy.watchUpdated)}更新`})));
+    if (dy.lastTell) b.append(h('div', {class: 'felt', text: `想讲给老大的：${dy.lastTell}`}));
+    b.append(h('div', {class: 'sub', text: '刷到什么（最近）'}), listBox(dy.events, (e) => `${fmtDT(e.at)}  ${e.text}`));
+    b.append(h('div', {class: 'sub', text: '她攒着想讲的'}), listBox(dy.tells, (e) => `${fmtDT(e.at)}  《${e.title}》${e.author ? ` ${e.author}` : ''}：${e.tell}`));
+    b.append(h('div', {class: 'sub', text: '抖音私信和评论'}), listBox(dy.chat, (e) => `${fmtDT(e.at)}  ${e.type || ''} ${e.text}`));
+  }
+  b.append(h('div', {class: 'sub', text: '随便逛'}), !d.explore.ok ? unavail(d.explore) : listBox(d.explore.list, (e) => `${fmtDT(e.at)}  [${e.kind || ''}] ${e.title}${e.why ? `（${e.why}）` : ''}${e.impression ? ` —— ${e.impression}` : ''}`));
+  b.append(h('div', {class: 'sub', text: 'B 站'}), !d.bili.ok ? unavail(d.bili) : listBox(d.bili.list, (e) => `${fmtDT(e.at)}  ${e.kind || ''} ${e.title}${e.up ? ` · ${e.up}` : ''}${e.bvid ? ` · ${e.bvid}` : ''}`));
+  b.append(h('div', {class: 'sub', text: '看老大电脑截到的屏幕'}), d.shots && d.shots.list && d.shots.list.length ? listBox(d.shots.list, (e) => `${fmtDT(e.at)}  ${e.name}`) : h('div', {class: 'dim small', text: (d.shots && d.shots.note) || '还没有存档'}));
+}
+
+// 5. 运行情况
+function ctxBar(label, used, limit, extra) {
+  const r = limit > 0 ? used / limit : 0;
+  return h('div', {class: 'ctx'}, h('div', {class: 'small'}, label, h('span', {class: 'dim', text: `  ${used == null ? '—' : used}${limit ? ` / ${limit}` : ''}${extra ? `  ${extra}` : ''}`})), h('div', {class: 'tr'}, h('div', {class: 'fl' + (r > 0.9 ? ' hotter' : r > 0.7 ? ' hot' : ''), style: `width:${Math.min(1, r) * 100}%`})));
+}
+function renderOps(who, c) {
+  const d = DATA.ops;
+  const b = clear(c.body);
+  if (!d || d.ok === false) { b.append(unavail(d)); return; }
+  b.append(h('div', {class: 'sub', text: '上下文用量'}));
+  if (who === 'fish') {
+    const list = (d.context && d.context.fish) || [];
+    b.append(...(list.length ? list.map((x) => ctxBar(x.label || x.key, x.tokens, x.limit, `换会话线 · 压缩 ${x.compactions || 0} 次`)) : [h('div', {class: 'dim small', text: '暂时读不到'})]));
+  } else {
+    const x = d.context && d.context.sister;
+    b.append(x ? ctxBar('会话存档大小（MB）', x.sessionMB, x.limitMB, x.rotatePending ? '快到了，空闲或睡醒时会换' : '') : h('div', {class: 'dim small', text: '暂时读不到（姐姐的进程没有回应）'}));
+  }
+  b.append(h('div', {class: 'sub', text: '今天的花费（只在这里看）'}));
+  const cost = d.cost && d.cost[who];
+  b.append(!cost || !cost.ok ? unavail(cost) : h('div', {class: 'small'}, h('div', {}, `${cost.symbol}${cost.cost}　${cost.turns} 轮　共 ${cost.tokens.toLocaleString()} token（输入 ${cost.input.toLocaleString()}，输出 ${cost.output.toLocaleString()}）`),
+    who === 'sister' && cost.weekUsed != null ? h('div', {class: 'dim', text: `本周额度已用 ${Math.round(cost.weekUsed * 100)}%`}) : null,
+    (cost.byKey || []).length ? h('div', {class: 'dim', text: '按会话：' + cost.byKey.map((k) => `${k.key} ${cost.symbol}${k.cost}`).join('；')}) : null, h('div', {class: 'dim', text: cost.note || ''})));
+  b.append(h('div', {class: 'sub', text: '最近报错'}));
+  const er = d.errors && d.errors[who];
+  b.append(!er || !er.ok ? unavail(er) : (er.lines.length ? h('div', {class: 'box small'}, er.lines.map((l) => h('div', {text: l}))) : h('div', {class: 'dim small', text: `${er.source} 里最近没有报错`})));
+  c.setMeta(er && er.source, er && er.mtime);
+}
+function renderOnline() {
+  const d = DATA.ops; const box = clear($('#onlineChips'));
+  if (!d || d.ok === false) { box.append(h('span', {class: 'chip dim', text: '运行状态暂时读不到'})); return; }
+  const o = d.online || {};
+  const one = (name, st, tip) => h('span', {class: 'chip', title: tip || ''}, h('span', {class: 'dot ' + (st === true ? 'ok' : st === false ? 'bad' : 'warn')}), name);
+  box.append(one('QQ', o.qq && o.qq.ok), one('DSH' + (o.dsh && o.dsh.paused ? '（暂停）' : ''), o.dsh && o.dsh.ok), one('记忆服务' + (o.memory && o.memory.ok && o.memory.building ? '（重建中）' : ''), o.memory && o.memory.ok, o.memory && o.memory.reason), one('抖音窗口', o.douyin && o.douyin.ok, o.douyin && o.douyin.reason), one('姐姐进程', o.sister && o.sister.ok, o.sister && o.sister.reason));
+}
+function renderMail() {
+  const d = DATA.ops; const b = clear(MAIL.body);
+  const m = d && d.mailbox;
+  if (!m || !m.ok) { b.append(unavail(m)); return; }
+  b.append(h('div', {class: 'small'}, `共 ${m.total} 封：` + Object.entries(m.counts).map(([k, v]) => `${k} ${v}`).join('　')));
+  b.append(h('div', {class: 'scroll'}, m.letters.map((l) => h('div', {class: 'box small'}, h('div', {}, h('b', {text: `${l.id}`}), `  ${fmtDT(l.at)}  ${l.from}  `, h('span', {class: 'badge', text: l.status})), h('div', {text: l.text}), l.reply ? h('div', {class: 'dim', text: `妈妈回：${l.reply}`}) : null))));
+}
+
+// 6. 能做的操作
+function confirmBox(text) {
+  return new Promise((resolve) => {
+    const dlg = $('#dlg'); $('#dlgText').textContent = text;
+    const done = (v) => { dlg.close(); resolve(v); };
+    $('#dlgYes').onclick = () => done(true); $('#dlgNo').onclick = () => done(false); dlg.oncancel = () => resolve(false);
+    if (dlg.showModal) dlg.showModal(); else resolve(confirm(text));
+  });
+}
+const LAST_RES = {fish: null, sister: null}; // 上一次操作的结果（页面重画后还能看到）
+const DRAFT = {fish: '', sister: ''};       // 留话写到一半的草稿（页面重画不丢）
+async function doAction(who, body, confirmText, resEl, after) {
+  if (!(await confirmBox(confirmText))) return;
+  resEl.className = 'res'; resEl.textContent = '处理中…';
+  const r = await api('/api/daughters/action', {who, confirm: true, ...body});
+  resEl.className = 'res ' + (r && r.ok ? 'ok' : 'bad');
+  resEl.textContent = (r && (r.message || r.error || r.reason)) || (r && r.ok ? '好了' : '没成');
+  LAST_RES[who] = {ok: !!(r && r.ok), text: resEl.textContent, at: Date.now()};
+  if (r && r.ok && after) after(r);
+  setTimeout(() => { refresh(who, ['now', 'meta', 'body']); }, 700);
+}
+function renderActions(who, c) {
+  const b = clear(c.body);
+  const nm = NAME[who];
+  const ta = h('textarea', {maxlength: '500', placeholder: `想对${nm}说的话（她下次醒来或下次看消息时会看到，500 字以内）`});
+  ta.value = DRAFT[who];
+  ta.addEventListener('input', () => { DRAFT[who] = ta.value; });
+  const r1 = h('div', {class: 'res'});
+  const noteBtn = h('button', {class: 'btn', type: 'button', text: '留话', onclick: () => { const t = ta.value.trim(); if (!t) { r1.className = 'res bad'; r1.textContent = '先写点什么'; return; } doAction(who, {action: 'note', text: t}, `给${nm}留一句话：\n\n${t}`, r1, () => { ta.value = ''; DRAFT[who] = ''; }); }});
+  const r2 = h('div', {class: 'res'});
+  const hours = h('select', {}, [1, 2, 4, 6, 8, 10].map((n) => h('option', {value: String(n), text: `${n} 小时`})));
+  const d = DATA[who].now; const sleeping = d && d.awake === false;
+  const wakeBtn = h('button', {class: 'btn alt', type: 'button', text: sleeping ? '叫醒' : '叫她出来看看', onclick: () => doAction(who, {action: 'wake'}, sleeping ? `把${nm}叫醒？` : `叫${nm}出来看看（她会收到一次唤醒）？`, r2)});
+  const sleepBtn = h('button', {class: 'btn danger', type: 'button', text: '让她睡', onclick: () => doAction(who, {action: 'sleep', hours: Number(hours.value)}, `让${nm}睡 ${hours.value} 小时？\n（她正在说话的这一轮说完才会躺下）`, r2)});
+  const hormOn = !!(META && META.hormones && META.hormones[who]);
+  const r3 = h('div', {class: 'res'});
+  const hormBtn = h('button', {class: 'btn alt', type: 'button', text: hormOn ? '关掉影子记录' : '打开影子记录', onclick: () => doAction(who, {action: 'hormones', enabled: !hormOn}, `${hormOn ? '关掉' : '打开'}${nm}的激素影子记录？\n只是记录，不影响她做事；已经记下的会留着。`, r3)});
+  const r4 = h('div', {class: 'res'});
+  const ef = META && META.effort && META.effort[who];
+  let effLine;
+  if (who === 'fish') {
+    const opts = (ef && ef.options) || ['low', 'high', 'max'];
+    const sel = h('select', {}, opts.map((o) => h('option', {value: o, text: o, selected: ef && ef.value === o})));
+    effLine = h('div', {class: 'line'}, '思考强度', sel, h('button', {class: 'btn alt', type: 'button', text: '改', onclick: () => doAction(who, {action: 'effort', effort: sel.value}, `把${nm}的思考强度改成 ${sel.value}？\n对已有会话于下一条消息起生效。`, r4)}));
+  } else {
+    const opts = (ef && ef.options) || ['low', 'medium', 'high', 'xhigh', 'max'];
+    const s1 = h('select', {}, opts.map((o) => h('option', {value: o, text: o, selected: ef && ef.effort === o})));
+    const s2 = h('select', {}, opts.map((o) => h('option', {value: o, text: o, selected: ef && ef.replyEffort === o})));
+    effLine = h('div', {class: 'line'}, '自己醒时', s1, '回话时', s2, h('button', {class: 'btn alt', type: 'button', text: '改', onclick: () => doAction(who, {action: 'effort', effort: s1.value, replyEffort: s2.value}, `把${nm}的思考强度改成：自己醒时 ${s1.value}，回话时 ${s2.value}？\n下一次起新进程时生效。`, r4)}));
+  }
+  b.append(h('div', {class: 'acts'},
+    h('fieldset', {}, h('legend', {text: '给她留话'}), ta, h('div', {class: 'line'}, noteBtn), r1),
+    h('fieldset', {}, h('legend', {text: '叫醒 / 让她睡'}), h('div', {class: 'line'}, wakeBtn, hours, sleepBtn), r2),
+    h('fieldset', {}, h('legend', {text: '激素影子记录'}), h('div', {class: 'line'}, h('span', {class: 'badge ' + (hormOn ? 'ok' : 'warn'), text: hormOn ? '开着' : '关着'}), hormBtn), r3),
+    h('fieldset', {}, h('legend', {text: '思考强度'}), effLine, r4)));
+  const lr = LAST_RES[who];
+  b.append(h('div', {class: 'dim small', style: 'margin-top:8px'}, '所有操作都要点「确定」才会生效。', lr ? h('span', {class: lr.ok ? 'res ok' : 'res bad', text: `  上一次（${fmtTime(lr.at)}）：${lr.text}`}) : null));
+}
+const ACT_SIG = {};
+/** 状态变了才重画操作区，而且正在里面打字 / 选东西时不动它。 */
+function maybeRenderActions(who, force) {
+  const m = META; const d = DATA[who].now; const c = R.act.cards[who];
+  const sig = JSON.stringify([m && m.hormones && m.hormones[who], m && m.effort && m.effort[who], !!(d && d.awake === false), LAST_RES[who] && LAST_RES[who].at]);
+  if (!force && ACT_SIG[who] === sig) return;
+  if (!force && c.el.contains(document.activeElement)) return;
+  ACT_SIG[who] = sig; renderActions(who, c);
+}
+
+// ───────────────────────── 拼页面 ─────────────────────────
+const main = $('#main');
+const R = {};
+R.now = mkRow('row-now', (who) => { const c = card(who, '此刻在干什么'); c.nowBody = h('div', {}); c.body.append(c.nowBody, buildLive(who)); return c; });
+R.body = mkRow('row-body', (who) => { const c = card(who, '身体和心情'); c.mood = c; c.horm = c; return c; });
+R.memory = mkRow('row-memory', (who) => card(who, '记忆和成长'));
+R.outside = mkRow('row-outside', (who) => card(who, '在外面玩'));
+R.ops = mkRow('row-ops', (who) => card(who, '运行情况'));
+R.act = mkRow('row-act', (who) => card(who, '能做的操作'));
+const mailRow = h('div', {class: 'row', id: 'row-mail', style: 'grid-template-columns:1fr'});
+const MAIL = card('fish', '妈妈信箱'); MAIL.el.querySelector('h2').textContent = '妈妈信箱（两人共用）';
+mailRow.append(MAIL.el);
+main.append(R.now.row, R.body.row, R.memory.row, R.outside.row, R.ops.row, R.act.row, mailRow);
+
+// ───────────────────────── 拉数据 ─────────────────────────
+const NEED = {now: ['now'], body: ['body'], memory: ['memory'], outside: ['outside']};
+async function refresh(who, kinds) {
+  await Promise.all(kinds.map(async (k) => {
+    if (k === 'meta') { const m = await api('/api/daughters/meta'); if (m && m.ok) { META = m; SKEW = m.skewMs || 0; for (const w of WHO) if (R.act) maybeRenderActions(w); } return; }
+    const r = await api(`/api/daughters/${k}?who=${who}`);
+    DATA[who][k] = r;
+    const at = (r && (r.at || Date.now()));
+    if (k === 'now') { renderNow(who, R.now.cards[who]); R.now.cards[who].setMeta(r && r.source, at); if (R.act) maybeRenderActions(who); }
+    else if (k === 'body') { renderBody(who, R.body.cards[who]); R.body.cards[who].setMeta('心情 / 激素文件', at); }
+    else if (k === 'memory') { renderMemory(who, R.memory.cards[who]); R.memory.cards[who].setMeta(r && r.source, Date.now()); }
+    else if (k === 'outside') { renderOutside(who, R.outside.cards[who]); R.outside.cards[who].setMeta('各插件 / 日志文件', Date.now()); }
+  }));
+}
+async function refreshOps() {
+  const r = await api('/api/daughters/ops');
+  DATA.ops = r;
+  renderOnline();
+  for (const w of WHO) { renderOps(w, R.ops.cards[w]); }
+  MAIL.setMeta('state/mom-mailbox/letters.json', r && r.at); renderMail();
+}
+function visibleWhos() { const m = document.body.className.replace('mode-', ''); return m === 'both' ? WHO : [m]; }
+const timers = [];
+function every(ms, fn) { timers.push(setInterval(() => { if (!document.hidden) fn(); }, ms)); }
+async function start() {
+  await refresh('fish', ['meta']);
+  for (const w of WHO) { await Promise.all([refresh(w, ['now', 'body', 'memory', 'outside'])]); }
+  await refreshOps();
+  for (const w of WHO) { maybeRenderActions(w, true); connectLive(w); }
+  every(5000, () => { for (const w of WHO) refresh(w, ['now']); });
+  every(30000, () => { for (const w of WHO) refresh(w, ['body']); });
+  every(45000, () => { for (const w of WHO) refresh(w, ['outside']); });
+  every(60000, () => { for (const w of WHO) refresh(w, ['memory']); refresh('fish', ['meta']); });
+  every(20000, refreshOps);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { for (const w of WHO) refresh(w, ['now', 'body']); refreshOps(); } });
+}
+
+// ───────────────────────── 顶栏 ─────────────────────────
+function setMode(m) {
+  document.body.className = 'mode-' + m; store.set('daughters-mode', m);
+  for (const bt of document.querySelectorAll('#modeSeg button')) bt.setAttribute('aria-pressed', String(bt.dataset.m === m));
+}
+for (const bt of document.querySelectorAll('#modeSeg button')) bt.addEventListener('click', () => setMode(bt.dataset.m));
+setMode(['fish', 'sister', 'both'].includes(store.get('daughters-mode')) ? store.get('daughters-mode') : 'both');
+function applyTheme(t) { if (t) document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme'); }
+(function(){ const saved = store.get('qq-console-theme'); applyTheme(saved === 'dark' || saved === 'light' ? saved : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')); })();
+$('#themeBtn').addEventListener('click', () => { const t = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'; applyTheme(t); store.set('qq-console-theme', t); for (const w of WHO) { if (DATA[w].body) renderBody(w, R.body.cards[w]); } });
+setInterval(() => { $('#clockNote').textContent = `北京时间 ${fmtTimeS(Date.now())}`; }, 1000);
+start();
+</script>
+</body>
+</html>

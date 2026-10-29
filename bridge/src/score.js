@@ -20,6 +20,26 @@ const LOCK = path.join(ROOT, 'run.lock');
 const WINGET_FFMPEG = path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages', 'Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe', 'ffmpeg-9.0.2-full_build', 'bin', 'ffmpeg.exe');
 const FFMPEG = fs.existsSync(WINGET_FFMPEG) ? WINGET_FFMPEG : 'ffmpeg';
 
+/**
+ * 本机补丁（2026-10-29）：读谱要先从 B 站下视频；B 站风控 / 要登录时接口回一整页网页，旧版插件直接 .json()，
+ * 把「Unexpected token '<', "<!DOCTYPE "... is not valid JSON」连同整段堆栈一路传到了她那儿（M11）。
+ * 这里把这种错误、以及任何堆栈，换成一句她看得懂、知道下一步怎么办的话；本来就是人话的原样留着。
+ */
+export const BILI_BLOCKED_HINT = 'B 站这会儿不让看这条（可能是风控或者需要登录），可以过一会儿再试，或者换一条';
+export function friendlyToolError(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '这次没弄成，可以过一会儿再试';
+  const lines = s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // 插件打过补丁后自己会说人话（带状态码），直接用它那句
+  const human = lines.find((l) => l.startsWith('B 站这会儿不让看'));
+  if (human) return human;
+  const status = /\bHTTP\s*(\d{3})\b/i.exec(s)?.[1];
+  if (/<!DOCTYPE|<html|is not valid JSON|Unexpected token\s*'?<'?/i.test(s)) return `${BILI_BLOCKED_HINT}${status ? `（HTTP ${status}）` : ''}`;
+  const stack = lines.some((l) => /^at\s.+:\d+:\d+\)?$/.test(l)) || /node:internal|file:\/\/\/|^Node\.js v\d/m.test(s);
+  if (stack) return '这次没弄成（那边程序出了岔子），可以过一会儿再试，或者换一条';
+  return s;
+}
+
 export function scoreAvailable() {
   return fs.existsSync(EXE.cpu) && fs.existsSync(path.join(MODELS, 'htdemucs-f16.gguf'));
 }
@@ -273,6 +293,7 @@ export async function scoreFile(file, { title = '', start = 0, seconds = 45, log
   if (!scoreAvailable()) throw new Error('读谱工具没装好');
   seconds = Math.max(10, Math.min(90, Number(seconds) || 45));
   start = Math.max(0, Number(start) || 0);
+  // 2026-10-29：兜底，冒上来的错误先换成人话再给她（见 friendlyToolError）
   return withLock(async () => {
     const t0 = Date.now();
     const gpu = await gpuFree();
@@ -311,5 +332,5 @@ export async function scoreFile(file, { title = '', start = 0, seconds = 45, log
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 临时文件删不掉不要紧 */ }
     }
-  });
+  }).catch((error) => { throw new Error(friendlyToolError(error?.message ?? error)); });
 }

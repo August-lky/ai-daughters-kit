@@ -1,4 +1,4 @@
-// 抖音截图超时（2026-10-24）：点分享卡片晚弹出的标签页没关 → 插件的页被压到后台 → 截图一直超时。
+// 抖音截图超时（2026-10-24）：点群友148晚弹出的标签页没关 → 插件的页被压到后台 → 截图一直超时。
 // 以及 softpause 补丁的漏洞：暂时性错误没暂停也写 contact.paused，桥接误报「私信被暂停」。
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +15,7 @@ test('私信截图前先把这一页提到前面', () => {
   assert.ok(i > 0 && shot > i && shot - i < 400);
 });
 
-test('打开分享卡片后：已冒出来的弹窗关掉，15 秒内晚到的也关，最后把这一页提到前面', () => {
+test('打开群友148后：已冒出来的弹窗关掉，15 秒内晚到的也关，最后把这一页提到前面', () => {
   const fin = browser.slice(browser.indexOf('if (popup) await popup.close().catch(() => {});'), browser.indexOf('  sendMessage(recipientId, message,'));
   assert.match(fin, /const closeStray = \(stray\) => \{ if \(stray !== page && !stray\.isClosed\(\)\) stray\.close\(\{ runBeforeUnload: false \}\)/);
   assert.match(fin, /other\.opener\(\)\.catch\(\(\) => null\) === page\) closeStray\(other\)/);

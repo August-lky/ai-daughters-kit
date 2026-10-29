@@ -3,7 +3,7 @@
     "baseUrl": "http://127.0.0.1:3080",
     "provider": "deepseek-official",
     "model": "deepseek-flash",
-    "reasoningEffort": "high",
+    "reasoningEffort": "max",
     "authHeader": "authorization",
     "authPrefix": "Bearer",
     "allowRemote": false
@@ -18,20 +18,20 @@
     "silenceWarnMs": 600000,
     "launcherPath": "E:/SnowLuma/launcher.bat",
     "homeDir": "E:/SnowLuma",
-    "selfUin": "10068"
+    "selfUin": "10074"
   },
-  "ownerQQ": 10050,
+  "ownerQQ": 10051,
   "sessionCwd": "",
   "agentPreset": "qq-chat",
   "workspaceTitle": "QQ 聊天",
   "allow": {
     "private": [
-      10050,
-      10068,
-      10112,
-      10099,
-      10086,
-      10069
+      10051,
+      10074,
+      10123,
+      10107,
+      10093,
+      10075
     ],
     "groups": [
       10008,
@@ -167,7 +167,7 @@
       "recommendedNameMention": true,
       "recommendedQuestion": false,
       "recommendedPoke": true,
-      "recommendedHint": "群里不用常来看：默认只有 @ 你、叫你名字、回你的消息、拍你才叫醒你。想多看就自己加关键词、开「提问」或调高普通消息概率；不想看就不看，偶尔瞄一眼也行。要潜水前可以先 qq_wait_for_messages 等一会儿（群里 1 分钟就够，私聊推荐 5 分钟），看有没有人接；需要等特定某人时可以设 triggers.speakerIds。",
+      "recommendedHint": "群里想看就看：默认只有 @ 你、叫你名字、回你的消息、拍你才叫醒你。想多看就自己加关键词、开「提问」或调高普通消息概率；不想看就不看。想潜水、想收尾直接就能设；不放心的话可以先 qq_wait_for_messages 等一会儿（群里 1 分钟左右，私聊 5 分钟左右）看有没有人接，不等也行。需要等特定某人时可以设 triggers.speakerIds。",
       "batchWindowMs": 2000,
       "maxWakePerMinute": 3,
       "maxWakePerHour": 40,
@@ -189,7 +189,7 @@
       "maxGapMs": 10000,
       "gapBaseMs": 500,
       "gapPerCharMs": 12,
-      "recommendedHint": "单条消息不要用空格断句，中文短句用逗号/顿号或直接连写；分条时每条都要读起来完整，不要把同一句话拆到两条里。发几条、隔多久、每条多长都由你定。一个事实：QQ 对长时间高速发消息的账号可能风控（限制发言甚至冻结）；桥接这边只留了一道防程序故障的保险（每分钟 60 条、每小时 600 条、一次最多 50 条），平时怎么发是你的事。",
+      "recommendedHint": "单条消息里的空格会被当成分条，中文短句用逗号/顿号或直接连写看着最自然；分条时每条自己读得通最好，同一句话拆到两条里会怪。发几条、隔多久、每条多长都由你定。一个事实：QQ 对长时间高速发消息的账号可能风控（限制发言甚至冻结）；桥接这边只留了一道防程序故障的保险（每分钟 60 条、每小时 600 条、一次最多 50 条），平时怎么发是你的事。",
       "typingBaseMs": 1500,
       "typingPerCharMs": 120,
       "typingMaxMs": 6000
@@ -254,9 +254,9 @@
       "unreadLimit": 30,
       "contextWindow": 20,
       "inlineWakeMessages": true,
-      "wakeMessageLimit": 12,
+      "wakeMessageLimit": 30,
       "wakeRecentLimit": 4,
-      "wakeMaxChars": 10000
+      "wakeMaxChars": 14000
     },
     "initialPromptMaxChars": 2000,
     "media": {
@@ -286,19 +286,12 @@
     "proxy": "http://127.0.0.1:7897"
   },
   "knownPeople": {
-    "10069": "克劳德姐姐"
+    "10075": "克劳德姐姐"
   },
   "houseGroups": {
     "10019": "小房子"
   },
-  "slowGroups": {
-    "10020": {
-      "minWakeGapSec": 120,
-      "maxLines": 2,
-      "debounceSec": 15,
-      "lurkGapMin": 60
-    }
-  },
+  "slowGroups": {},
   "fishMemoryKeys": [
     "group:10020",
     "group:10019"
@@ -312,5 +305,11 @@
     "sisterMinGapSec": 12,
     "sisterOwnerYieldSec": 15,
     "sisterAfterFishSec": 4
+  },
+  "hormones": {
+    "enabled": true
+  },
+  "chatLog": {
+    "enabled": true
   }
 }

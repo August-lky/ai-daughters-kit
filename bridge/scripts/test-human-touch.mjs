@@ -40,7 +40,7 @@ const slice = (from, to) => { const a = src.indexOf(from); const b = src.indexOf
     assert.match(body, new RegExp(`${v} = ''`), `${v} 不到时候要清空`);
   }
   assert.match(body, /buildOwnerPcBriefV2\(key, \{ withGuide: staticDue \}\)/);
-  assert.match(src, /\+ pcLine \+ booksLine \+ ramblingLine \+ desktopPetLine/);
+  assert.match(src, /\+ pcLine \+ booksLine \+ novelLine \+ ramblingLine \+ desktopPetLine/);
   ok('接线：12 块固定内容不到时候就不带；电脑那块平时只给事实');
 }
 
@@ -76,8 +76,9 @@ const slice = (from, to) => { const a = src.indexOf(from); const b = src.indexOf
   assert.ok(!/^\s*await sendToQQ\(key, `⚠️ agent 处理出错/m.test(src), 'agent 报错不发 QQ');
   assert.ok(!/await sendToQQ\(key, `⚠️ 消息未被接受/.test(src), '消息未被接受不发 QQ');
   assert.equal(JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8')).security?.interceptNotify, false);
-  assert.match(src, /let watchFailLine = '【卡住了也要说】[^']*用大白话[^']*写信给妈妈（qq_mom_mailbox）/);
-  ok('报错只记日志不发 QQ；卡住了跟老大说大白话、细节写给妈妈');
+  // 2026-10-29 老大（松绑）：从「卡住了也要说」改成「可以跟老大说，也可以写信给妈妈」，她自己定。
+  assert.match(src, /let watchFailLine = '【卡住了】[^']*可以跟老大说一声，用大白话[^']*也可以写信给妈妈（qq_mom_mailbox）[^']*怎么办你自己定/);
+  ok('报错只记日志不发 QQ；卡住了可以跟老大说大白话、也可以写给妈妈，她自己定');
 }
 
 // ⑦ 音游：手感靠练，她传的准度参数不生效
