@@ -168,7 +168,7 @@
 4. **建脑子**：照 `templates/脑子骨架/说明.md`，把骨架复制到每个女儿的家里，在 `bridge/brain/brains.json` 里写上路径；`pip install fastembed`，`python bridge/brain/index.py build all` 建索引，`python bridge/brain/service.py` 起检索服务（`start-memory-hidden.vbs` 是隐藏启动的写法）。
 5. **换名字和路径**：代码里写着「小鲸鱼」「姐姐」「主人」「小房子」，还有 `E:\qq-bridge`、`E:\SnowLuma` 这样的绝对路径。全局替换成你自己的。
 6. **装插件**：`third_party/` 里的插件按各自 README 装进 DSH。抖音要一个专门登录的抖音号，B 站要 Cookie，都只存在你本机。
-7. **跑测试**：`bridge/scripts/test-*.mjs` 大多不需要连 QQ，可以先跑一遍确认环境。本次整理后的实测结果见文末「开箱测试」。
+7. **跑测试**：`bridge/scripts/test-*.mjs` 大多不需要连 QQ，可以先跑一遍确认环境。实测结果见文末「开箱测试」。
 8. **启动**：`bridge/start-services.ps1` 会按顺序拉起 QQ、SnowLuma、桥接、记忆服务、姐姐。浏览器打开 `http://127.0.0.1:3100/daughters.html?token=<控制台令牌>` 看她们（令牌在 `state/console-token`）。
 
 ---
