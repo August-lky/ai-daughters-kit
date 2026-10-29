@@ -199,6 +199,21 @@
 
 ---
 
+## 开箱测试（2026-10-29）
+
+从 GitHub 干净克隆，`node bridge/scripts/verify-kit.mjs --dir . --install --tests` 的结果（`npm ci` + 把 `config.ours.example.json` 复制成 `config.json`；每个测试一个子进程，HOME / APPDATA 指到临时目录）：
+
+- 静态检查全过：319 个 JS 过 `node --check`，17 个 Python 过语法检查，JSON 全合法；该有的文件都在（brain、网页和 vendor 许可证、骨架、新模块……）；不该有的（数据库、state、config、角色卡、聊天记录、脑子、语音样本、令牌格式）一个没有。
+- 离线测试：103 个里 15 个会碰进程 / 页面 / 活服务（控制台、抖音看门、DSH 联调等），默认不跑；跑的 88 个里 **61 个通过，27 个没过**。没过的：
+  - 13 个在原机上也不过（上游老测试没跟上本机改动，或要连活服务）：`test-audit`、`test-audit-security-mcp`、`test-brain-newcaps`、`test-mirror`、`test-preset-local-tools`、`test-preset-prompt`、`test-qq-model-view`、`test-qq-preset-contract`、`test-reply-wait`、`test-role-card`、`test-token-economy`、`test-voice`、`test-brain-recall.py`；
+  - 13 个原机上能过，但要仓库里**故意没有**的东西（姐姐的 persona、`.bak` 备份、真的索引、脑子目录、导出脚本本身）：`test-brain-graph.py`、`test-brain-service.py`、`test-brain-paths`、`test-brain-unify`、`test-daughters-console`、`test-fish-chatlog`、`test-flood-1029`、`test-git-push-retry`、`test-mood-unify`、`test-novel-tools`、`test-sister-e`、`test-sister-explore`、`test-sister-rotate`；
+  - 1 个（`test-setup-dsh-idempotent`）受运行环境影响。
+- 跑测试前后 Edge 进程数和主进程号没变。
+
+自己装的时候，先用 `--install --tests` 跑一遍对一对，再动手。
+
+---
+
 ## 许可证
 
 本仓库自己的部分用 [MIT](LICENSE)。`bridge/`、`third_party/` 和 `bridge/plugins-ext/` 里的代码保留各自原作者的 MIT 许可证，见 [THIRD_PARTY.md](THIRD_PARTY.md)。
