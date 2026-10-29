@@ -4,7 +4,7 @@ import { BrowserController, frontIfStalled } from './core.mjs?v=9';
 import { messageFingerprint } from './chat-message.mjs';
 import { MessageIdentityTracker } from './message-tracker.mjs';
 // 本机补丁（2026-10-24，avatar）：头像只比文件名本体（去路径、去扩展名）。会话列表和标题栏给的头像链接
-// 前缀、格式可能不同（jpeg/webp），原来一不同就判成「不是同一个人」并暂停联系人——群友235那个会话就这样被卡过两次。
+// 前缀、格式可能不同（jpeg/webp），原来一不同就判成「不是同一个人」并暂停联系人——群友236那个会话就这样被卡过两次。
 const avatarKey = (value) => String(value || '').split('/').pop().replace(/\.[a-z0-9]+$/i, '');
 const sameAvatar = (a, b) => avatarKey(a) === avatarKey(b);
 // 本机补丁（2026-10-24，settle）：私信弹窗盖在刷视频的同一个页面上，切到下一条视频时弹窗会重渲染，
@@ -138,7 +138,7 @@ export function readConversationDom() {
     // ⚠ 本机补丁（2026-10-23）：「分享评论」卡片（别人视频下的一条评论 + 来自哪个视频）。以前认不出，她只看到一个空框；
     // 读成一行文字，她能看懂也能接话，指纹也稳定。
     const commentShare = textNode ? null : node.querySelector('.MessageItemCommentSharecontainer');
-    // 本机补丁（2026-10-26，photo）：消息里显示出来的图片（不是头像、不是表情和群友148）认成 photo，observe 能截它；
+    // 本机补丁（2026-10-26，photo）：消息里显示出来的图片（不是头像、不是表情和群友149）认成 photo，observe 能截它；
     // 网页版自己显示不了的（.MessageItemUnsuportunsupport「暂不支持该消息类型展示」）不算，照旧 unsupported。
     const photo = textNode || commentShare || emoji || share || node.querySelector('.MessageItemUnsuportunsupport') ? null
       : [...node.querySelectorAll('img')].find(image => !image.closest('[class*="vatar"]') && (image.naturalWidth || image.width || 0) > 24) || null;
@@ -215,7 +215,7 @@ export class ChatBrowser {
     this.controller = controller ?? new BrowserController({ source });
     // 本机补丁（2026-10-26，front）：私信和自主观看共用一个 Edge 窗口的两个标签页，不在前台的那页不出新画面
     // （requestAnimationFrame 停了，visibilityState 却还报 visible），打开会话的 waitForFunction 等到超时、发送按钮也点不下去
-    // （10-26 早上她边刷边回，连着卡了十分钟，群友235被暂停）。每次私信操作先把自己这页提到前面，挂一个全局标记占着前台；
+    // （10-26 早上她边刷边回，连着卡了十分钟，群友236被暂停）。每次私信操作先把自己这页提到前面，挂一个全局标记占着前台；
     // 观看那边截图前看到标记就先等它放手（见 core.mjs 的 front 补丁）。
     const withPage = this.controller.withPage.bind(this.controller);
     this.controller.withPage = (callback, options) => withPage(async page => {
@@ -478,7 +478,7 @@ export class ChatBrowser {
       if (message.media.url) return { ...flags, opened: false, videoId: message.media.videoId, url: message.media.url, source: 'dom-link' };
       await this.markMessages(page, messages);
       const card = page.locator(`[data-e2e="im-dialog"] ${message.media.safeOpenSelector}`);
-      if (await card.count() !== 1) throw new Error('没有唯一的指定群友148。');
+      if (await card.count() !== 1) throw new Error('没有唯一的指定群友149。');
       const beforeUrl = new URL(page.url());
       const beforeId = /^\/video\/(\d+)\/?$/.exec(beforeUrl.pathname)?.[1] || beforeUrl.searchParams.get('modal_id') || null;
       const pop = page.waitForEvent('popup', { timeout: 2500 }).catch(() => null);

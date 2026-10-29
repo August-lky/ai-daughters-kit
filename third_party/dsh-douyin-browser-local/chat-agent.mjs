@@ -20,7 +20,7 @@ function recentSharesText(now = Date.now()) {
     .map(item => `· 作品 ${item.videoId}（https://www.douyin.com/video/${item.videoId}）—— 你当时想分享的理由：${String(item.reason || '').slice(0, 160)}`);
   const tells = readJsonl(new URL('watch-tell.jsonl', STATE_DIR), 20).filter(item => now - Number(item.at) < DAY_MS).slice(-4)
     .map(item => `· ${item.author ? '@' + item.author + ' ' : ''}${item.title || ''} ${item.url || ''} —— 你想跟他说：${String(item.tell || '').slice(0, 160)}`);
-  return [shares.length ? `你最近（一天内）分享给他的抖音视频（他回的话多半是在说这些；群友148里看不到标题，内容以你当时的理由为准）：\n${shares.join('\n')}` : '',
+  return [shares.length ? `你最近（一天内）分享给他的抖音视频（他回的话多半是在说这些；群友149里看不到标题，内容以你当时的理由为准）：\n${shares.join('\n')}` : '',
     tells.length ? `你刷到过、想讲给他听的：\n${tells.join('\n')}` : ''].filter(Boolean).join('\n\n');
 }
 function buildPrompt() {
@@ -58,7 +58,7 @@ export class ChatAgent {
         parts.push({type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.data}`,detail:'high'}});
       }
     }
-    if(parts.length) content.push({role:'user',content:[{type:'text',text:'以下图片只属于指定的新消息。表情图片或群友148封面不能证明看过作品全程；只有标注实际作品采样的图片能说明那些采样时刻。没有音频证据时不得声称听懂声音。'},...parts]});
+    if(parts.length) content.push({role:'user',content:[{type:'text',text:'以下图片只属于指定的新消息。表情图片或群友149封面不能证明看过作品全程；只有标注实际作品采样的图片能说明那些采样时刻。没有音频证据时不得声称听懂声音。'},...parts]});
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error('私信模型请求超时。')), this.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;

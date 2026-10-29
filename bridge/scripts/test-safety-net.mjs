@@ -50,12 +50,12 @@ const nameOf = (k) => (k === 'private:1' ? '老大私聊' : k);
   const body = src.match(/function noteFishHealth\(line\) \{[\s\S]*?\n\}/)[0];
   const got = [];
   const note = new Function('noteFishHealthEvent', `${body}\nreturn noteFishHealth;`)((kind, key, text) => got.push({ kind, key, text }));
-  note('11:03:24 [bridge] ⚠️ agent 处理出错 (private:10051)：DeepSeek Messages request failed (400)');
-  note('11:45:03 [bridge] [reserved2] 工具统一发送 private:10051: 成功 1/1 条');
+  note('11:03:24 [bridge] ⚠️ agent 处理出错 (private:10052)：DeepSeek Messages request failed (400)');
+  note('11:45:03 [bridge] [reserved2] 工具统一发送 private:10052: 成功 1/1 条');
   note('11:45:03 [bridge] QQ 发送失败 (group:1): timeout');
   note('11:09:27 [bridge] SnowLuma 连接断开（code=1006），重连中…');
   note('11:09:27 [bridge] SnowLuma 已连接：ws://127.0.0.1:3001');
-  assert.deepEqual(got.map((g) => `${g.kind}@${g.key}`), ['run@private:10051', 'ok@private:10051', 'send@group:1', 'qq-down@', 'qq-up@']);
+  assert.deepEqual(got.map((g) => `${g.kind}@${g.key}`), ['run@private:10052', 'ok@private:10052', 'send@group:1', 'qq-down@', 'qq-up@']);
   assert.match(src, /noteFishHealthEvent\('token'/, '令牌被拒也记');
   ok('桥接日志里的运行失败、发送成功/失败、QQ 断线重连都记进健康记录');
 }

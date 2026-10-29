@@ -195,7 +195,7 @@ sudo apt install ffmpeg    # Debian / Ubuntu
 | 假设 | 为什么依赖它 | 换环境怎么办 |
 |---|---|---|
 | **宿主能"被唤醒"** | 生物钟由**插件宿主自己**驱动：每 60 秒 tick → 跑 `night plan` → 到点用 `sessionController.prompt` 往她的会话里塞一个回合（v0.1.5 起 ✗ 不再需要人挂 `night clock`）| 换 DSH 版本时确认 `sessionController` 还在；没有的话退化成"宿主侧定时轮询 + `night clock`"（老办法 ✓）|
-| **有一个通知渠道**（向使用者推送）| 可见性要求"自主发言后必须报备""每天推一条摘要" | 换成你的：邮件 / webhook / IM / 写文件让宿主轮询。**只要"使用者群友252"成立** ✓ 配置见 `config.notify`（`stdout`/`file`/`dm`/`webhook`/`command` 五种后端 —— **`dm` 就是 B站私信，零外部依赖** ✓）|
+| **有一个通知渠道**（向使用者推送）| 可见性要求"自主发言后必须报备""每天推一条摘要" | 换成你的：邮件 / webhook / IM / 写文件让宿主轮询。**只要"使用者群友253"成立** ✓ 配置见 `config.notify`（`stdout`/`file`/`dm`/`webhook`/`command` 五种后端 —— **`dm` 就是 B站私信，零外部依赖** ✓）|
 | **有一个调度器** | 兜底标记（宿主没开那晚也留痕）| Windows 计划任务 / Linux `cron` / systemd timer —— 都只是**跑一次** `whale-night.mjs mark` |
 | **有 ffmpeg** | 只有"抽帧看画面"用得到 | 装进 PATH，或用环境变量 `FFMPEG` 指定绝对路径；不装就跳过画面那一路，其余照常 |
 | **B 站账号 + 本机凭据文件** | 一切读写都靠它 | 无替代（这就是目标平台）|

@@ -28,11 +28,11 @@ const ok = (name) => { passed += 1; console.log('✅', name); };
   const inbox = [
     { at: 50, direction: 'outgoing', name: '旧的', text: '早就发了' },
     { at: 200, direction: 'incoming', name: '朋友', text: '朋友说的不算' },
-    { at: 300, direction: 'outgoing', name: '群友235', text: '这只猫被拉成蛇了' },
+    { at: 300, direction: 'outgoing', name: '群友236', text: '这只猫被拉成蛇了' },
     { at: 400, direction: 'outgoing', name: '老大', text: '', media: { type: 'shared-work', author: '冬冰' } }
   ];
-  const share = { operations: [{ status: 'confirmed', completedAt: new Date(500).toISOString(), recipientName: '群友235' }, { status: 'failed', completedAt: new Date(600).toISOString() }] };
-  assert.deepEqual(douyinActions(100, { inbox, share }), ['私信给 群友235：「这只猫被拉成蛇了」', '私信给 老大：一条视频（@冬冰）', '把一条视频转给了群友235']);
+  const share = { operations: [{ status: 'confirmed', completedAt: new Date(500).toISOString(), recipientName: '群友236' }, { status: 'failed', completedAt: new Date(600).toISOString() }] };
+  assert.deepEqual(douyinActions(100, { inbox, share }), ['私信给 群友236：「这只猫被拉成蛇了」', '私信给 老大：一条视频（@冬冰）', '把一条视频转给了群友236']);
   ok('她在抖音上做的事：只读她发出去的，别人发给她的不读');
 }
 

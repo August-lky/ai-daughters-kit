@@ -1722,7 +1722,7 @@ async function main() {
     if (!line) return;
     // 图一到就开始下（醒着才下；睡着时等醒了再说）。人多的慢群（slowGroups）只预取叫她的那条，别的等真要看再下
     if (!asleep() && ex.imgs?.length && (wantsHer || !cfg.slowGroups?.[gid])) prefetchImages(ex.imgs.slice(0, 3).map((im) => ({ ...im, mid: im.mid ?? event.message_id ?? null })));
-    // 别人名字里带「老大」这类叫法的注一句（2026-10-25 小鲸鱼把「群友118」当成了老大）
+    // 别人名字里带「老大」这类叫法的注一句（2026-10-25 小鲸鱼把「群友119」当成了老大）
     const rawWho = event.sender?.card || event.sender?.nickname || from;
     const who = from === fishId ? '小鲸鱼' : from === ownerId ? '老大' : (/老大|主人/.test(rawWho) ? `${rawWho}（不是老大）` : rawWho);
     groupLine(gid, who, line, event.message_id ?? null, ex.imgs || [], from, wantsHer); // wantsHer = 这条会叫她（@ / 小房子里的家人 / 冲小鲸鱼），带图时优先给她看这条的图

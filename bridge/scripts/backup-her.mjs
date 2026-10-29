@@ -145,7 +145,7 @@ function redactText(text, aliases, code = false) {
   return t;
 }
 // JSON 按结构脱敏：字符串照文本脱敏，号码型的数字换成代号字符串——保证写回去还是合法 JSON。
-// 原来是数字的（比如 "ownerQQ": 10051）换成字符串后，还原号码.mjs 要知道它原来是数字：把这类字段名记进 NUMKEYS，
+// 原来是数字的（比如 "ownerQQ": 10052）换成字符串后，还原号码.mjs 要知道它原来是数字：把这类字段名记进 NUMKEYS，
 // 每个文件一份，汇总到 部署/号码类型.json（只有字段名，没有号码）。
 let NUMKEYS = null;
 function redactValue(v, aliases, key = '') {

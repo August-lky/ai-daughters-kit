@@ -79,9 +79,9 @@ async function sendWebhook(url, tpl) {
 function sendDesktop() {
   if (DRY) { console.log('[dry] 桌面通知：' + String(text).slice(0, 60)); return }
   if (process.platform !== 'win32') { console.log(`[通知] ${title}\n${text}`); return }
-  // 2026-10-18 修：原来在 群友46 里用 \" 转义拼 XML 字符串 —— PS 解析器不认这种转义
+  // 2026-10-18 修：原来在 群友47 里用 \" 转义拼 XML 字符串 —— PS 解析器不认这种转义
   //   （UnexpectedToken 'ToastGeneric'），桌面通知永远发不出去。改成由 Node 直接产出 XML ✓，
-  //   群友46 只负责"读文件 + Show"，不碰任何字符串拼接。
+  //   群友47 只负责"读文件 + Show"，不碰任何字符串拼接。
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   const toastXml = `<?xml version="1.0" encoding="utf-8"?>`
     + `<toast><visual><binding template="ToastGeneric">`

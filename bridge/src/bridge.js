@@ -2563,7 +2563,7 @@ async function main() {
   }
 
   // 网关返回的 QQ 空间文本里带两种原始标记，模型看不懂，转成人读的：
-  //   @{uin:10051,nick:某某某🐳[em]e327831[/em],who:1}  →  @某某某🐳
+  //   @{uin:10052,nick:某某某🐳[em]e327831[/em],who:1}  →  @某某某🐳
   //   [em]e327831[/em]                                        →  ［表情］
   function readableQzoneText(raw) {
     return String(raw ?? '')
@@ -9572,7 +9572,7 @@ async function main() {
 
 
   // ── 句中的 @（2026-10-22 主人：「一句话只能使用一次@，第二次的@会变成纯文本」） ──
-  // 以前只有 atUserId 那一个人是真 @，她在正文里写的「@群友47」原样当文字发出去，对方收不到提醒。
+  // 以前只有 atUserId 那一个人是真 @，她在正文里写的「@群友48」原样当文字发出去，对方收不到提醒。
   // 现在群聊正文里的「@群名片/@昵称/@QQ号」只要能唯一对上一个群成员，就换成真正的 @ 段，留在原来的位置。
   // 对不上（或同名不止一个人）就保持文字；@全体成员 / @all 永远不转。
   const atRosterCacheV2 = new Map(); // groupId -> { names: Map(名字→QQ), ids: Set, ts }
@@ -12985,14 +12985,14 @@ async function main() {
 
   // 共享记忆层。
   // 她同时活在 5 个会话里，但每个会话的 prompt 只装自己那一份上下文 —— 结果就是
-  // "五个人"：在主人私聊里问"群友118跟你聊了啥"，她会真心回答"没找过我"，
+  // "五个人"：在主人私聊里问"群友119跟你聊了啥"，她会真心回答"没找过我"，
   // 尽管那边已经聊了 112 条。
   // 这里把所有会话最近的活动合成一条时间线，每个会话都注入同一份。
   // 代价是每轮多几百字；换来的是"一个她"。
   // 认得的人（config.json 的 knownPeople：{ "QQ号": "名字" }）。2026-10-24：私聊发来的人原来一律记成「私聊」，
   // 她分不清对面是谁，克劳德姐姐来了她就照着角色卡把姐姐当成了老大。
   /**
-   * 群里发言人的叫法（2026-10-25 她把「群友118」当成了主人）：主人标成「老大（群名片）」；
+   * 群里发言人的叫法（2026-10-25 她把「群友119」当成了主人）：主人标成「老大（群名片）」；
    * 别人名字里带主人专属叫法（老大 / 主人 / 宝宝 / <主人的昵称>）的，注一句「不是你老大」。
    */
   const OWNER_WORDS_RE = /老大|主人|宝宝|<主人的昵称>/;
@@ -14385,7 +14385,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
     return `你点开看了这些：\n${items}\n这些是你自己看过的，有想聊的就自然拿去聊（群里、主人都行），想再找回来用 qq_explore_recall。\n`;
   }
 
-  // ── 成长札记（2026-10-22 主人：让她对人、对世界有更深的理解，并且留下能群友252的成长记录） ──
+  // ── 成长札记（2026-10-22 主人：让她对人、对世界有更深的理解，并且留下能群友253的成长记录） ──
   // 精读后每天最多一句，存在脑子的 日子/成长札记/我的成长.md（whale-explore 写，路径见 brains.js）；每个会话醒来都带最近 5 条，
   // 让这些理解真的进到她说话和看事情的方式里。主人改了、删了那个文件，这里下一次唤醒就跟着变。
   const GROWTH_NOTES_PER_DAY = 12; // 只防刷屏，不是"每天该记几句"
@@ -14981,7 +14981,7 @@ ${nightReviewLineV2()}\n默认所有人可见，内容是你自己的，不用�
       '$t = $x.GetElementsByTagName("text")',
       '$t.Item(0).AppendChild($x.CreateTextNode($env:TOAST_TITLE)) | Out-Null',
       '$t.Item(1).AppendChild($x.CreateTextNode($env:TOAST_BODY)) | Out-Null',
-      '$id = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\Windows群友46\\v1.0\\powershell.exe"',
+      '$id = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\Windows群友47\\v1.0\\powershell.exe"',
       '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($x))'
     ].join('; ');
     return new Promise((resolve) => {

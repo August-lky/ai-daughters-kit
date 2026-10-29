@@ -69,7 +69,7 @@ const SKEW = 10_790_329; // 本机比真实时间快的毫秒数（state/clock-s
   assert.equal(whoLabel({ isOwner: true, sender: '老大（群名片）' }), '老大');
   assert.equal(whoLabel({ userId: '777', sender: '私聊', knownPeople: known }), '姐姐');
   assert.equal(whoLabel({ userId: '888', sender: '谁', knownPeople: known }), '阿花');
-  assert.equal(whoLabel({ userId: '1', sender: '群友118（不是你老大）' }), '群友118', '去掉桥接加的注释');
+  assert.equal(whoLabel({ userId: '1', sender: '群友119（不是你老大）' }), '群友119', '去掉桥接加的注释');
   assert.equal(whoLabel({ userId: '1', sender: '路人甲' }), '路人甲');
   assert.equal(whoLabel({ userId: '1', sender: '私聊' }), '1', '占位名退回 QQ 号');
   assert.equal(whoLabel({ key: 'private:123', ownerQQ: '123', sender: '私聊' }), '老大', '老大私聊里不是她说的就是老大说的');

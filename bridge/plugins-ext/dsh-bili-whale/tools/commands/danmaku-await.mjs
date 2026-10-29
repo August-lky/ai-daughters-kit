@@ -107,7 +107,7 @@ const TEMPLATE = new RegExp([
   '盲盒',            // 感谢XX的盲盒: 幸运盲盒x1(亏2.50元)
   // 她的自动致谢都以「感谢/谢谢」开头（礼物、盲盒、关注、夸奖…），按行首整族排除，别再逐条追
   '^感谢|^谢谢',
-  '群友288',            // 群友288XX来给主播打call啦
+  '群友289',            // 群友289XX来给主播打call啦
   '打call',
   '比心心',
   '老板心意',        // 收到老板心意！😘 明天UV8安排…
@@ -149,13 +149,13 @@ if (args.has('selftest')) {
     [A, '欢迎y4ngyy, 等你好久了~', false],
     [A, '欢迎-筱阳阳-, 吃饭了嘛~', false],
     [A, '欢迎CuryMamo, 什么星座的呀?', false],
-    [A, '欢迎我们的群友288—某群友288，想你啦~', false],
+    [A, '欢迎我们的群友289—某群友289，想你啦~', false],
     [A, '欢迎欢迎～快乐老家开张啦！😆', false],
     [A, '喜欢主播的小伙伴，点点关注不迷路~', false],
     [A, '喜欢主播请关注, 主播带你去致富~', false],
     [A, '小礼物和弹幕都是对主播的支持哦，比心心~', false],
     [A, '感谢某观众3的礼物: 人气票x1', false],
-    [A, '群友288某观众来给主播打call啦', false],
+    [A, '群友289某观众来给主播打call啦', false],
     [A, '收到老板心意！😘 明天UV8安排，保准亮瞎全场✨', false],
     [A, '好哒～谢谢你的贴心建议呀🥰', false],
     [A, '夸我可太开心啦🎶，谢谢宝宝的支持！(ʃƪ＾∀＾)', false],
@@ -206,7 +206,7 @@ const SKY = 10 * 60 * 1000 // 时间只做粗筛（history 有可见延迟）；
 function scanRows(rows, via) {
   for (const r of [...rows].reverse()) {
     const id = String(r.id_str ?? `${r.timeline}|${r.nickname}|${r.text}`)
-    // --debug：逐条说明"为什么跳过"（2026-10-18 排"群友252却不回"时加的 ✓）
+    // --debug：逐条说明"为什么跳过"（2026-10-18 排"群友253却不回"时加的 ✓）
     const dbg = (why) => { if (args.has('debug')) log(`[debug-scan] ${r.timeline} uid=${r.uid} 「${String(r.text).slice(0, 12)}」 → ${why}`) }
     if (recentIds.has(id)) { dbg('已见过（recentIds）'); continue }
     const ts = Date.parse(String(r.timeline).replace(/-/g, '/'))

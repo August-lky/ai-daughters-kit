@@ -159,7 +159,7 @@ export class ChatService {
     if(includeWork && message.media.type==='shared-work') {
       const inspector=await this.videoInspector();
       const limits=inspector.limits().state();
-      if(!limits.allowed) {result.note=`当前只读取群友148封面和网页元数据，未播放作品：${limits.reason}`;return result;}
+      if(!limits.allowed) {result.note=`当前只读取群友149封面和网页元数据，未播放作品：${limits.reason}`;return result;}
       try {
         const resolved=await this.browser.openSharedVideo(id,messageId,{allowed:true,signal});
         result.sharedWork=resolved;
@@ -171,9 +171,9 @@ export class ChatService {
         result.frames.push(...(observed.frames??[]).slice(0,3));
         result.sharedWork={...resolved,state:observed.state,observation:observed.observation};
         result.understandingScope='card-cover-and-three-second-video-sampling';
-        result.note='第一张是群友148，其余是实际作品三秒内的采样；没有音频，不代表看完整条作品。';
+        result.note='第一张是群友149，其余是实际作品三秒内的采样；没有音频，不代表看完整条作品。';
         await inspector.execute('douyin_pause',{}, {signal});
-      }catch(error) {signal?.throwIfAborted();result.note=`群友148已读取，作品观察未完成：${redact(error.message,[this.config.apiKey])}`;await inspector.pauseForLimits().catch(()=>{});}
+      }catch(error) {signal?.throwIfAborted();result.note=`群友149已读取，作品观察未完成：${redact(error.message,[this.config.apiKey])}`;await inspector.pauseForLimits().catch(()=>{});}
     }
     return result;
   }

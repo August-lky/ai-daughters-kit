@@ -213,7 +213,7 @@ console.log('  content-type: application/x-www-form-urlencoded')
 console.log('  headers: UA(Chrome 131) + referer=' + referer)
 console.log('  cookie : SESSDATA=***; bili_jct=***; buvid3=***   (已脱敏)')
 console.log('  body   : ' + body.replace(encodeURIComponent(String(cred.bili_jct)), '***csrf***'))
-console.log(`  正文长度 ${message.length} 字符（上限 1000）；oid=${oid}；emoji/表情需群友308，本脚本只发纯文本`)
+console.log(`  正文长度 ${message.length} 字符（上限 1000）；oid=${oid}；emoji/表情需群友309，本脚本只发纯文本`)
 
 if (dry) {
   console.log('\n[dry] 未发送。确认文案与账号后，把 --dry 换成 --go 再跑一次。')

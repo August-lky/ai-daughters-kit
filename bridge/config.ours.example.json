@@ -18,20 +18,20 @@
     "silenceWarnMs": 600000,
     "launcherPath": "E:/SnowLuma/launcher.bat",
     "homeDir": "E:/SnowLuma",
-    "selfUin": "10074"
+    "selfUin": "10075"
   },
-  "ownerQQ": 10051,
+  "ownerQQ": 10052,
   "sessionCwd": "",
   "agentPreset": "qq-chat",
   "workspaceTitle": "QQ 聊天",
   "allow": {
     "private": [
-      10051,
-      10074,
-      10123,
-      10107,
-      10093,
-      10075
+      10052,
+      10075,
+      10125,
+      10109,
+      10095,
+      10076
     ],
     "groups": [
       10008,
@@ -286,7 +286,7 @@
     "proxy": "http://127.0.0.1:7897"
   },
   "knownPeople": {
-    "10075": "克劳德姐姐"
+    "10076": "克劳德姐姐"
   },
   "houseGroups": {
     "10019": "小房子"

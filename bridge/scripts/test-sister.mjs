@@ -139,7 +139,7 @@ const MIN = 60e3;
 
 // ⑧ 护着她：有人冲小鲸鱼才叫姐姐；陪看间隔她自己定
 {
-  const fish = 10074;
+  const fish = 10075;
   assert.equal(hostileToFish({ message: [{ type: 'at', data: { qq: String(fish) } }, { type: 'text', data: { text: ' 你个破AI闭嘴吧' } }] }, fish), true, '@ 她骂');
   assert.equal(hostileToFish({ message: [{ type: 'reply', data: { id: '77' } }, { type: 'text', data: { text: '傻逼' } }] }, fish, new Set(['77'])), true, '回复她骂');
   assert.equal(hostileToFish({ message: [{ type: 'text', data: { text: '小鲸鱼真是废物' } }] }, fish), true, '点名骂');

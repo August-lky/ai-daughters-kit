@@ -17,7 +17,7 @@
 | oid        | num  | 目标评论区id             | 必要           |                                                              |
 | root       | num  | 根评论rpid               | 非必要         | 二级评论以上使用                                             |
 | parent     | num  | 父评论rpid               | 非必要         | 二级评论同根评论id<br />大于二级评论为要回复的评论id         |
-| message    | str  | 发送评论内容             | 必要           | 最大1000字符<br />表情使用表情群友308                         |
+| message    | str  | 发送评论内容             | 必要           | 最大1000字符<br />表情使用表情群友309                         |
 | plat       | num  | 发送平台标识             | 非必要         | 1：web端<br />2：安卓客户端<br />3：ios客户端<br />4：wp客户端<br />默认为1 |
 | csrf       | str  | CSRF Token（位于cookie） | Cookie方式必要 |                                                              |
 
@@ -48,12 +48,12 @@
 | root_str       | str                           | 根评论rpid     | 字串格式                                                     |
 | parent         | num                           | 回复父评论rpid | 若为一级评论则为0<br />若为二级评论则为根评论id<br />大于二级评论为上一级评论id |
 | parent_str     | str                           | 回复父评论rpid | 字串格式                                                     |
-| emote          | obj                           | 表情群友308信息 | [对象定义见表](readme.md#评论条目对象)                       |
+| emote          | obj                           | 表情群友309信息 | [对象定义见表](readme.md#评论条目对象)                       |
 | reply          | 有效时：obj<br />无效时：null |                | [对象定义见表](readme.md#评论条目对象)                       |
 
 **示例：**
 
-给视频`av243322853`发送内容为`测试test[泠鸢yousa_awsl]`的评论（带有表情群友308），平台标识为1（web端）
+给视频`av243322853`发送内容为`测试test[泠鸢yousa_awsl]`的评论（带有表情群友309），平台标识为1（web端）
 
 ```shell
 curl 'https://api.bilibili.com/x/v2/reply/add' \
